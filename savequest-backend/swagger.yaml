@@ -1,0 +1,861 @@
+openapi: 3.0.0
+info:
+  title: SaveQuest Plaid API
+  version: 1.0.0
+  description: API endpoints for Plaid integration in SaveQuest backend
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+servers:
+  - url: http://localhost:5000
+tags:
+  - name: Plaid Endpoints
+    description: Endpoints for Plaid integration
+  - name: User Endpoints
+    description: Endpoints for user management
+  - name: Challenge Endpoints
+    description: Endpoints for user challenge participation, check-ins, and streaks
+paths:
+  /user-challenges/join:
+    post:
+      tags:
+        - Challenge Endpoints
+      summary: Enroll a user in a challenge
+      description: |
+        Enrolls a user in a challenge. Creates a userChallenge document with initial streak and status.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - userId
+                - challengeId
+              properties:
+                userId:
+                  type: string
+                  description: Unique identifier for the user.
+                  example: "user_123"
+                challengeId:
+                  type: string
+                  description: Unique identifier for the challenge.
+                  example: "challenge_abc"
+      responses:
+        '201':
+          description: User successfully joined the challenge.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  userId:
+                    type: string
+                  challengeId:
+                    type: string
+                  streak:
+                    type: integer
+                    description: Initial streak value (should be 0 or 1)
+                  status:
+                    type: string
+                    description: Challenge status (e.g., active, completed)
+              examples:
+                success:
+                  value:
+                    userId: "user_123"
+                    challengeId: "challenge_abc"
+                    streak: 1
+                    status: "active"
+        '400':
+          description: Invalid input or user already joined.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+              examples:
+                error:
+                  value:
+                    error: "User already joined this challenge."
+
+  /user-challenges/check-in:
+    post:
+      tags:
+        - Challenge Endpoints
+      summary: Daily check-in for a challenge (requires qualifying payment)
+      description: |
+        Handles a daily check-in for a user on a challenge. Updates streak and status based on check-in logic.
+        **Check-in now requires a qualifying payment (transaction) on the check-in date.**
+        If no qualifying payment is found, check-in will be rejected.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - userId
+                - challengeId
+                - date
+              properties:
+                userId:
+                  type: string
+                  description: Unique identifier for the user.
+                  example: "user_123"
+                challengeId:
+                  type: string
+                  description: Unique identifier for the challenge.
+                  example: "challenge_abc"
+                date:
+                  type: string
+                  format: date
+                  description: ISO date string for the check-in (YYYY-MM-DD).
+                  example: "2025-07-12"
+      responses:
+        '200':
+          description: Check-in successful, streak and status updated. Includes qualifying payment details.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  userId:
+                    type: string
+                  challengeId:
+                    type: string
+                  streak:
+                    type: integer
+                    description: Updated streak value
+                  status:
+                    type: string
+                    description: Challenge status (e.g., active, completed, failed)
+                  qualifyingPayment:
+                    type: object
+                    description: The transaction that qualified this check-in
+                    properties:
+                      transaction_id:
+                        type: string
+                        example: "txn-1234"
+                      amount:
+                        type: number
+                        example: 5.25
+                      date:
+                        type: string
+                        format: date
+                        example: "2025-07-12"
+                      merchant_name:
+                        type: string
+                        example: "Starbucks"
+                      category:
+                        type: string
+                        example: "Coffee Shop"
+              examples:
+                success:
+                  value:
+                    userId: "user_123"
+                    challengeId: "challenge_abc"
+                    streak: 2
+                    status: "active"
+                    qualifyingPayment:
+                      transaction_id: "txn-1234"
+                      amount: 5.25
+                      date: "2025-07-12"
+                      merchant_name: "Starbucks"
+                      category: "Coffee Shop"
+        '400':
+          description: Invalid input, already checked in, or no qualifying payment found.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+              examples:
+                error:
+                  value:
+                    error: "No qualifying payment found for this date."
+  /user-challenges/sync-transactions:
+    post:
+      tags:
+        - Challenge Endpoints
+      summary: Manually sync transactions for a user
+      description: |
+        Triggers a manual transaction sync for a user using their stored Plaid access token. This can be used if the user wants to refresh their transactions on demand.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - userId
+              properties:
+                userId:
+                  type: string
+                  description: Unique identifier for the user.
+                  example: "user_123"
+                days:
+                  type: integer
+                  description: Number of days to sync (default: 30)
+                  example: 30
+      responses:
+        '200':
+          description: Transactions synced successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  transactionCount:
+                    type: integer
+                  dateRange:
+                    type: object
+                    properties:
+                      startDate:
+                        type: string
+                        format: date
+                      endDate:
+                        type: string
+                        format: date
+              examples:
+                success:
+                  value:
+                    success: true
+                    message: "Transactions synced successfully for 30 days."
+                    transactionCount: 42
+                    dateRange:
+                      startDate: "2025-06-12"
+                      endDate: "2025-07-12"
+        '400':
+          description: Invalid input or sync failed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+              examples:
+                error:
+                  value:
+                    success: false
+                    message: "No Plaid account found for this user. Please link your bank account first."
+
+  /user-challenges/{userId}/{challengeId}/streak:
+    get:
+      tags:
+        - Challenge Endpoints
+      summary: Get current streak for a user on a challenge
+      description: |
+        Returns the current streak count for a user on a specific challenge.
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+          description: Unique identifier for the user.
+        - in: path
+          name: challengeId
+          required: true
+          schema:
+            type: string
+          description: Unique identifier for the challenge.
+      responses:
+        '200':
+          description: Current streak count returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  userId:
+                    type: string
+                  challengeId:
+                    type: string
+                  streak:
+                    type: integer
+                    description: Current streak value
+              examples:
+                success:
+                  value:
+                    userId: "user_123"
+                    challengeId: "challenge_abc"
+                    streak: 5
+        '404':
+          description: User or challenge not found.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+              examples:
+                error:
+                  value:
+                    error: "User or challenge not found."
+  /plaid/link-token:
+    post:
+      tags:
+        - Plaid Endpoints
+      summary: Generate a Plaid Link token
+      description: |
+        Generates a one-time Plaid Link token for the frontend to initialize the bank linking flow. The client must provide a userId in the request body. The response contains a link_token and its expiration time.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userId:
+                  type: string
+                  description: Unique identifier for the user requesting the link token.
+                  example: "user_123"
+      responses:
+        '200':
+          description: Successfully generated a Plaid link_token and expiration info.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  link_token:
+                    type: string
+                    description: The generated Plaid Link token for initializing the bank linking flow.
+                    example: "link-sandbox-12345678-xxxx"
+                  expiration:
+                    type: string
+                    format: date-time
+                    description: The ISO timestamp when the link token expires.
+                    example: "2025-07-12T12:00:00Z"
+              examples:
+                success:
+                  value:
+                    link_token: "link-sandbox-12345678-xxxx"
+                    expiration: "2025-07-12T12:00:00Z"
+        '400':
+          description: Invalid or missing userId in request body.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: Error message describing the problem with the request.
+              examples:
+                error:
+                  value:
+                    error: "userId is required."
+  /plaid/exchange:
+    post:
+      tags:
+        - Plaid Endpoints
+      summary: Exchange a public token for an access token
+      description: |
+        Exchanges a short-lived public_token (from Plaid Link) for a permanent access_token and item_id. The client must provide the publicToken in the request body. The access_token is required for all future Plaid API calls for this user.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                publicToken:
+                  type: string
+                  description: The short-lived public token received from Plaid Link.
+                  example: "public-sandbox-xxx"
+      responses:
+        '200':
+          description: Successfully exchanged public_token for access_token and item_id.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                    description: The permanent access token for the user's Plaid item.
+                    example: "access-sandbox-12345678-xxxx"
+                  item_id:
+                    type: string
+                    description: The Plaid item ID associated with the user's bank connection.
+                    example: "item-12345678-xxxx"
+              examples:
+                success:
+                  value:
+                    access_token: "access-sandbox-12345678-xxxx"
+                    item_id: "item-12345678-xxxx"
+        '400':
+          description: Invalid or missing publicToken in request body.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: Error message describing the problem with the request.
+              examples:
+                error:
+                  value:
+                    error: "publicToken is required."
+  /plaid/transactions:
+    post:
+      tags:
+        - Plaid Endpoints
+      summary: Fetch transactions for a user
+      description: |
+        Fetches transactions and account information for a user from Plaid. The client must provide a valid userId, accessToken, startDate, and endDate in the request body. Returns an array of transactions and accounts. Also stores the transactions in Firestore for future validation.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userId:
+                  type: string
+                  description: The unique user ID for whom transactions are being fetched and stored.
+                  example: "user_abc123"
+                accessToken:
+                  type: string
+                  description: The Plaid access token for the user whose transactions are being fetched.
+                  example: "access-sandbox-xxx"
+                startDate:
+                  type: string
+                  format: date
+                  description: Start date (YYYY-MM-DD) for the transaction query.
+                  example: "2024-01-01"
+                endDate:
+                  type: string
+                  format: date
+                  description: End date (YYYY-MM-DD) for the transaction query.
+                  example: "2024-01-31"
+      responses:
+        '200':
+          description: Successfully fetched transactions and accounts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  transactions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        transaction_id:
+                          type: string
+                          description: Unique identifier for the transaction.
+                          example: "txn-1234"
+                        amount:
+                          type: number
+                          description: Amount of the transaction in the account's currency.
+                          example: 5.25
+                        date:
+                          type: string
+                          format: date
+                          description: Date the transaction was posted (YYYY-MM-DD).
+                          example: "2025-07-10"
+                        merchant_name:
+                          type: string
+                          description: Name of the merchant for the transaction.
+                          example: "Starbucks"
+                        category:
+                          type: string
+                          description: Category of the transaction (e.g., Coffee Shop).
+                          example: "Coffee Shop"
+                  accounts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        account_id:
+                          type: string
+                          description: Unique identifier for the account.
+                          example: "acc-1234"
+                        name:
+                          type: string
+                          description: Name of the account (e.g., Plaid Checking).
+                          example: "Plaid Checking"
+                        type:
+                          type: string
+                          description: Type of the account (e.g., depository, credit).
+                          example: "depository"
+                        subtype:
+                          type: string
+                          description: Subtype of the account (e.g., checking, savings).
+                          example: "checking"
+              examples:
+                success:
+                  value:
+                    transactions:
+                      - transaction_id: "txn-1234"
+                        amount: 5.25
+                        date: "2025-07-10"
+                        merchant_name: "Starbucks"
+                        category: "Coffee Shop"
+                    accounts:
+                      - account_id: "acc-1234"
+                        name: "Plaid Checking"
+                        type: "depository"
+                        subtype: "checking"
+        '400':
+          description: Invalid or missing parameters in request body.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: Error message describing the problem with the request.
+              examples:
+                error:
+                  value:
+                    error: "accessToken, startDate, and endDate are required."
+  /plaid/accounts:
+    post:
+      tags:
+        - Plaid Endpoints
+      summary: Fetch account information for a user
+      description: |
+        Fetches account information for a user from Plaid. The client must provide a valid accessToken in the request body. Returns an array of accounts.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                accessToken:
+                  type: string
+                  description: The Plaid access token for the user whose accounts are being fetched.
+                  example: "access-sandbox-xxx"
+      responses:
+        '200':
+          description: Successfully fetched account information.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accounts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        account_id:
+                          type: string
+                          description: Unique identifier for the account.
+                          example: "acc-1234"
+                        name:
+                          type: string
+                          description: Name of the account (e.g., Plaid Checking).
+                          example: "Plaid Checking"
+                        type:
+                          type: string
+                          description: Type of the account (e.g., depository, credit).
+                          example: "depository"
+                        subtype:
+                          type: string
+                          description: Subtype of the account (e.g., checking, savings).
+                          example: "checking"
+              examples:
+                success:
+                  value:
+                    accounts:
+                      - account_id: "acc-1234"
+                        name: "Plaid Checking"
+                        type: "depository"
+                        subtype: "checking"
+        '400':
+          description: Invalid or missing accessToken in request body.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: Error message describing the problem with the request.
+              examples:
+                error:
+                  value:
+                    error: "accessToken is required."
+  /plaid/webhook:
+    post:
+      tags:
+        - Plaid Endpoints
+      summary: Handle Plaid webhook events
+      description: |
+        Receives webhook events from Plaid (such as new transactions, errors, or item updates). The backend processes the event and updates Firestore or logs as needed. The request body contains the webhook payload from Plaid.
+      # No security for webhook endpoint (Plaid cannot send JWT)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Webhook event processed successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    description: Status message indicating the webhook was processed.
+                    example: "Webhook event processed."
+              examples:
+                success:
+                  value:
+                    message: "Webhook event processed."
+        '400':
+          description: Invalid webhook payload or processing error.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: Error message describing the problem with the request.
+              examples:
+                error:
+                  value:
+                    error: "Invalid webhook payload."
+
+  # User Endpoints
+  /users:
+    post:
+      tags:
+        - User Endpoints
+      summary: Create a new user
+      description: |
+        Creates a new user in the database. Fails if a user with the same userId already exists.
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - userId
+                - name
+                - email
+              properties:
+                userId:
+                  type: string
+                  description: Unique identifier for the user.
+                  example: "user_123"
+                name:
+                  type: string
+                  description: Name of the user.
+                  example: "Alice"
+                email:
+                  type: string
+                  description: Email address of the user.
+                  example: "alice@example.com"
+      responses:
+        '201':
+          description: User created successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  userId:
+                    type: string
+                  name:
+                    type: string
+                  email:
+                    type: string
+              examples:
+                success:
+                  value:
+                    userId: "user_123"
+                    name: "Alice"
+                    email: "alice@example.com"
+        '400':
+          description: Invalid input or user already exists.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+              examples:
+                error:
+                  value:
+                    error: "User already exists."
+
+  /users/{userId}:
+    get:
+      tags:
+        - User Endpoints
+      summary: Get user by userId
+      description: |
+        Retrieves a user by their userId.
+      operationId: getUser
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+          description: Unique identifier for the user.
+      responses:
+        '200':
+          description: User found.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  userId:
+                    type: string
+                  name:
+                    type: string
+                  email:
+                    type: string
+              examples:
+                success:
+                  value:
+                    userId: "user_123"
+                    name: "Alice"
+                    email: "alice@example.com"
+        '404':
+          description: User not found.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+              examples:
+                error:
+                  value:
+                    error: "User not found."
+
+    delete:
+      tags:
+        - User Endpoints
+      summary: Delete user by userId
+      description: |
+        Deletes a user from the database by their userId.
+      operationId: deleteUser
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+          description: Unique identifier for the user.
+      responses:
+        '204':
+          description: User deleted successfully. No content returned.
+        '404':
+          description: User not found.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+              examples:
+                error:
+                  value:
+                    error: "User not found."
+
+    put:
+      tags:
+        - User Endpoints
+      summary: Update user by userId
+      description: |
+        Updates an existing user's information. Fails if the user does not exist.
+      operationId: updateUser
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+          description: Unique identifier for the user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: Updated name of the user.
+                  example: "Alice Smith"
+                email:
+                  type: string
+                  description: Updated email address of the user.
+                  example: "alice.smith@example.com"
+      responses:
+        '200':
+          description: User updated successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  userId:
+                    type: string
+                  name:
+                    type: string
+                  email:
+                    type: string
+              examples:
+                success:
+                  value:
+                    userId: "user_123"
+                    name: "Alice Smith"
+                    email: "alice.smith@example.com"
+        '404':
+          description: User not found.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+              examples:
+                error:
+                  value:
+                    error: "User not found."
