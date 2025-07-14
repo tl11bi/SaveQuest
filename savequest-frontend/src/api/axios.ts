@@ -9,7 +9,7 @@ class ApiService {
 
   constructor() {
     this.instance = axios.create({
-      baseURL: '/api', // Change to your backend base URL if needed
+      baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
       timeout: 10000,
     });
 

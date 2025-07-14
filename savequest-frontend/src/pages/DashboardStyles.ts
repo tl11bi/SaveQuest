@@ -1,0 +1,28 @@
+// DashboardStyles.ts
+const styles = {
+  pageContainer: { paddingTop: 64, paddingBottom: 64, maxWidth: 480, margin: '0 auto' },
+  appBar: { position: 'fixed', top: 0, left: 0, right: 0, height: 56, background: '#fff', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 18px', zIndex: 101, boxShadow: '0 1px 4px rgba(0,0,0,0.03)' },
+  logo: { fontWeight: 700, fontSize: 20 },
+  profileRow: { display: 'flex', alignItems: 'center', gap: 8 },
+  profileIcon: { width: 36, height: 36, borderRadius: '50%', border: '2px solid #eee', objectFit: 'cover' },
+  signOutBtn: { marginLeft: 8, fontSize: 13, padding: '4px 10px', borderRadius: 6, border: '1px solid #eee', background: '#fafafa', cursor: 'pointer' },
+  welcomeCard: { display: 'flex', alignItems: 'center', background: '#f8fafc', borderRadius: 14, padding: '18px 18px 18px 10px', marginBottom: 18, boxShadow: '0 2px 8px rgba(60,64,67,.04)' },
+  welcomeProfileImg: { width: 56, height: 56, borderRadius: '50%', marginRight: 16, border: '3px solid #e3e8f0', boxShadow: '0 2px 8px #e3e8f0' },
+  welcomeTitle: { fontWeight: 700, fontSize: 20, color: '#222' },
+  welcomeSubtitle: { color: '#888', fontSize: 14, marginTop: 2 },
+  quickGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 20 },
+  quickBtn: { flex: '0 0 auto', padding: '10px 14px', borderRadius: 8, border: '1px solid #ddd', background: '#fff', fontWeight: 500, fontSize: 14 },
+  challengesSection: { marginBottom: 24 },
+  challengeCardModern: { background: 'linear-gradient(90deg, #f8fafc 60%, #e3e8f0 100%)', borderRadius: 14, padding: 18, marginBottom: 14, boxShadow: '0 2px 8px rgba(60,64,67,.06)', display: 'flex', flexDirection: 'column', alignItems: 'flex-start' },
+  challengeName: { fontWeight: 600, fontSize: 16, color: '#333', marginBottom: 2 },
+  challengeStreak: { color: '#888', fontSize: 14, marginBottom: 8 },
+  streakNum: { color: '#ff9800', fontWeight: 700 },
+  checkInBtn: { background: '#4285F4', color: '#fff', border: 'none', marginTop: 0, flex: '0 0 auto', padding: '10px 14px', borderRadius: 8, fontWeight: 500, fontSize: 14 },
+  activityCard: { background: '#f8fafc', borderRadius: 14, padding: 16, marginBottom: 24, boxShadow: '0 2px 8px rgba(60,64,67,.04)' },
+  activityTitle: { fontWeight: 600, fontSize: 16, marginBottom: 8, color: '#333' },
+  activityList: { listStyle: 'none', padding: 0, margin: 0 },
+  activityItem: { marginBottom: 6, padding: '8px 0', color: '#444', fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 },
+  bottomNav: { position: 'fixed', left: 0, right: 0, bottom: 0, height: 56, background: '#fff', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'space-around', alignItems: 'center', zIndex: 100, boxShadow: '0 -1px 4px rgba(0,0,0,0.03)' },
+  navBtn: { background: 'none', border: 'none', fontSize: 15, fontWeight: 500, color: '#333', flex: 1, height: '100%' },
+};
+export default styles;
