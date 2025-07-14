@@ -1,0 +1,2259 @@
+Index: src/services/challengeService.js
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/services/challengeService.js b/src/services/challengeService.js
+new file mode 100644
+--- /dev/null	(date 1752376320135)
++++ b/src/services/challengeService.js	(date 1752376320135)
+@@ -0,0 +1,229 @@
++/**
++ * ChallengeService handles all Firestore logic for user challenges.
++ *
++ * Methods:
++ * - joinChallenge(userId, challengeId): Enrolls a user in a challenge if not already joined.
++ * - checkIn(userId, challengeId, date): Handles a daily check-in with payment verification, updates streak and check-ins.
++ * - calculateStreak(userId, challengeId): Returns the current streak and last check-in date.
++ * - verifyQualifyingPayment(userId, date): Verifies that a qualifying payment exists for the given date.
++ * - syncTransactions(userId, days): Triggers manual transaction sync for a user.
++ * - getUserPlaidAccessToken(userId): Helper to find user's Plaid access token.
++ */
++
++const firestoreService = require('./firestoreService');
++
++module.exports = {
++  /**
++   * Enrolls a user in a challenge. Creates a user-challenge doc if not exists.
++   * @param {string} userId - User's unique ID
++   * @param {string} challengeId - Challenge's unique ID
++   * @returns {Promise<object>} The joined challenge data or error
++   */
++  async joinChallenge(userId, challengeId) {
++    try {
++      // Use FirestoreService to check and create challenge doc
++      const challenge = await firestoreService.getChallengeData(userId, challengeId);
++      if (challenge) {
++        return { success: false, message: 'User already joined this challenge.' };
++      }
++      const data = {
++        userId,
++        challengeId,
++        streak: 0,
++        lastCheckIn: null,
++        checkIns: [],
++        joinedAt: new Date().toISOString(),
++      };
++      await firestoreService.saveChallengeData(userId, challengeId, data);
++      return { success: true, data };
++    } catch (error) {
++      return { success: false, message: error.message };
++    }
++  },
++
++  /**
++   * Handles a daily check-in for a user on a challenge. Updates streak and check-ins.
++   * Now verifies that a qualifying payment exists for the check-in date.
++   * @param {string} userId - User's unique ID
++   * @param {string} challengeId - Challenge's unique ID
++   * @param {string} date - ISO date string for the check-in (YYYY-MM-DD)
++   * @returns {Promise<object>} Updated streak/status or error
++   */
++  async checkIn(userId, challengeId, date) {
++    try {
++      const data = await firestoreService.getChallengeData(userId, challengeId);
++      if (!data) {
++        return { success: false, message: 'User is not enrolled in this challenge.' };
++      }
++
++      // Prevent duplicate check-in for the same day
++      const checkIns = data.checkIns || [];
++      if (checkIns.includes(date)) {
++        return { success: false, message: 'Already checked in for this date.' };
++      }
++
++      // Verify qualifying payment exists for the check-in date
++      const hasQualifyingPayment = await this.verifyQualifyingPayment(userId, date);
++      if (!hasQualifyingPayment.success) {
++        return { 
++          success: false, 
++          message: hasQualifyingPayment.message || 'No qualifying payment found for this date.'
++        };
++      }
++
++      const lastCheckIn = data.lastCheckIn ? new Date(data.lastCheckIn) : null;
++      const today = new Date(date);
++      let streak = data.streak || 0;
++
++      // Calculate streak
++      if (lastCheckIn) {
++        const diff = Math.floor((today - lastCheckIn) / (1000 * 60 * 60 * 24));
++        if (diff === 1) {
++          streak += 1;
++        } else if (diff > 1) {
++          streak = 1;
++        }
++      } else {
++        streak = 1;
++      }
++
++      checkIns.push(date);
++      await firestoreService.saveChallengeData(userId, challengeId, {
++        ...data,
++        streak,
++        lastCheckIn: date,
++        checkIns,
++      });
++      
++      return { 
++        success: true, 
++        streak, 
++        lastCheckIn: date, 
++        checkIns,
++        qualifyingPayment: hasQualifyingPayment.transaction
++      };
++    } catch (error) {
++      return { success: false, message: error.message };
++    }
++  },
++
++  /**
++   * Calculates the current streak for a user on a challenge.
++   * @param {string} userId - User's unique ID
++   * @param {string} challengeId - Challenge's unique ID
++   * @returns {Promise<object>} The current streak and last check-in date, or error
++   */
++  async calculateStreak(userId, challengeId) {
++    try {
++      const data = await firestoreService.getChallengeData(userId, challengeId);
++      if (!data) {
++        return { success: false, message: 'User is not enrolled in this challenge.' };
++      }
++      return { success: true, streak: data.streak || 0, lastCheckIn: data.lastCheckIn || null };
++    } catch (error) {
++      return { success: false, message: error.message };
++    }
++  },
++
++  /**
++   * Verifies that a qualifying payment exists for the given date.
++   * A qualifying payment is defined as a debit transaction (payment/purchase) on the specified date.
++   * @param {string} userId - User's unique ID
++   * @param {string} date - ISO date string (YYYY-MM-DD)
++   * @returns {Promise<object>} Success with transaction details or failure message
++   */
++  async verifyQualifyingPayment(userId, date) {
++    try {
++      const transactions = await firestoreService.getTransactions(userId);
++      
++      if (!transactions || transactions.length === 0) {
++        return { 
++          success: false, 
++          message: 'No transactions found. Please sync your transactions first.' 
++        };
++      }
++
++      // Find transactions on the specified date that are payments/purchases
++      const qualifyingTransactions = transactions.filter(txn => {
++        if (!txn.date || !txn.amount) return false;
++        
++        // Check if transaction date matches the check-in date
++        const txnDate = txn.date; // Plaid transactions come with date in YYYY-MM-DD format
++        if (txnDate !== date) return false;
++        
++        // Check if it's a debit transaction (payment/purchase)
++        // Plaid amounts are positive for debits, negative for credits
++        return txn.amount > 0;
++      });
++
++      if (qualifyingTransactions.length === 0) {
++        return { 
++          success: false, 
++          message: 'No qualifying payments found for this date. Make a purchase to complete your check-in.' 
++        };
++      }
++
++      // Return the first qualifying transaction as proof
++      return { 
++        success: true, 
++        transaction: qualifyingTransactions[0],
++        totalQualifying: qualifyingTransactions.length
++      };
++    } catch (error) {
++      return { success: false, message: `Error verifying payment: ${error.message}` };
++    }
++  },
++
++  /**
++   * Triggers a manual transaction sync for a user using their stored Plaid access token.
++   * @param {string} userId - User's unique ID
++   * @param {number} days - Number of days to sync (default: 30)
++   * @returns {Promise<object>} Success with transaction count or error
++   */
++  async syncTransactions(userId, days = 30) {
++    try {
++      // First, we need to find the user's Plaid access token
++      // We'll look through all plaid item mappings to find one for this user
++      const plaidService = require('./plaidService');
++      
++      // Get user's Plaid access token (we'll need to find it from the mappings)
++      const accessToken = await this.getUserPlaidAccessToken(userId);
++      if (!accessToken) {
++        return { 
++          success: false, 
++          message: 'No Plaid account found for this user. Please link your bank account first.' 
++        };
++      }
++
++      // Calculate date range
++      const endDate = new Date().toISOString().split('T')[0]; // Today
++      const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
++
++      // Fetch and store transactions
++      const result = await plaidService.getTransactions(userId, accessToken, startDate, endDate);
++      
++      return { 
++        success: true, 
++        message: `Transactions synced successfully for ${days} days.`,
++        transactionCount: result.transactions ? result.transactions.length : 0,
++        dateRange: { startDate, endDate }
++      };
++    } catch (error) {
++      return { success: false, message: `Failed to sync transactions: ${error.message}` };
++    }
++  },
++
++  /**
++   * Helper method to find a user's Plaid access token from stored mappings.
++   * @param {string} userId - User's unique ID
++   * @returns {Promise<string|null>} Access token or null if not found
++   */
++  async getUserPlaidAccessToken(userId) {
++    try {
++      return await firestoreService.getPlaidAccessTokenByUserId(userId);
++    } catch (error) {
++      console.error('Error finding user Plaid access token:', error);
++      return null;
++    }
++  },
++};
+Index: src/app.js
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/app.js b/src/app.js
+new file mode 100644
+--- /dev/null	(date 1752376324232)
++++ b/src/app.js	(date 1752376324232)
+@@ -0,0 +1,31 @@
++const express = require('express');
++const cors = require('cors');
++const userController = require('./controllers/userController');
++const plaidController = require('./controllers/plaidController');
++const challengeController = require('./controllers/challengeController');
++
++const app = express();
++app.use(cors());
++app.use(express.json());
++
++// User endpoints
++app.post('/users', userController.createUser);
++app.get('/users/:userId', userController.getUser);
++app.put('/users/:userId', userController.updateUser);
++app.delete('/users/:userId', userController.deleteUser);
++
++// Plaid endpoints
++// /plaid/transactions now requires userId, accessToken, startDate, endDate in body
++app.post('/plaid/link-token', plaidController.createLinkToken);
++app.post('/plaid/exchange', plaidController.exchangePublicToken);
++app.post('/plaid/transactions', plaidController.getTransactions);
++app.post('/plaid/accounts', plaidController.getAccounts);
++app.post('/plaid/webhook', plaidController.handleWebhook);
++
++// Challenge endpoints
++app.post('/user-challenges/join', challengeController.joinChallenge);
++app.post('/user-challenges/check-in', challengeController.checkIn);
++app.get('/user-challenges/:userId/:challengeId/streak', challengeController.getStreak);
++app.post('/user-challenges/sync-transactions', challengeController.syncTransactions);
++
++module.exports = app;
+Index: src/controllers/challengeController.js
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/controllers/challengeController.js b/src/controllers/challengeController.js
+new file mode 100644
+--- /dev/null	(date 1752376320692)
++++ b/src/controllers/challengeController.js	(date 1752376320692)
+@@ -0,0 +1,99 @@
++/**
++ * ChallengeController handles HTTP requests for user challenges.
++ */
++const challengeService = require('../services/challengeService');
++
++module.exports = {
++  /**
++   * Enrolls a user in a challenge.
++   * @param {Request} req - Express request (expects userId, challengeId in body)
++   * @param {Response} res - Express response
++   * @returns {object} Joined challenge data or error
++   */
++  async joinChallenge(req, res) {
++    try {
++      const { userId, challengeId } = req.body;
++      if (!userId || !challengeId) {
++        return res.status(400).json({ success: false, message: 'userId and challengeId are required.' });
++      }
++      const result = await challengeService.joinChallenge(userId, challengeId);
++      if (result.success) {
++        return res.status(201).json(result);
++      } else {
++        return res.status(400).json(result);
++      }
++    } catch (error) {
++      return res.status(500).json({ success: false, message: error.message });
++    }
++  },
++
++  /**
++   * Handles a daily check-in for a user on a challenge.
++   * @param {Request} req - Express request (expects userId, challengeId, date in body)
++   * @param {Response} res - Express response
++   * @returns {object} Updated streak/status or error
++   */
++  async checkIn(req, res) {
++    try {
++      const { userId, challengeId, date } = req.body;
++      if (!userId || !challengeId || !date) {
++        return res.status(400).json({ success: false, message: 'userId, challengeId, and date are required.' });
++      }
++      const result = await challengeService.checkIn(userId, challengeId, date);
++      if (result.success) {
++        return res.status(200).json(result);
++      } else {
++        return res.status(400).json(result);
++      }
++    } catch (error) {
++      return res.status(500).json({ success: false, message: error.message });
++    }
++  },
++
++  /**
++   * Gets the current streak for a user on a challenge.
++   * @param {Request} req - Express request (expects userId, challengeId in params)
++   * @param {Response} res - Express response
++   * @returns {object} Current streak or error
++   */
++  async getStreak(req, res) {
++    try {
++      const { userId, challengeId } = req.params;
++      if (!userId || !challengeId) {
++        return res.status(400).json({ success: false, message: 'userId and challengeId are required in params.' });
++      }
++      const result = await challengeService.calculateStreak(userId, challengeId);
++      if (result.success) {
++        return res.status(200).json(result);
++      } else {
++        return res.status(404).json(result);
++      }
++    } catch (error) {
++      return res.status(500).json({ success: false, message: error.message });
++    }
++  },
++
++  /**
++   * Triggers manual transaction sync for a user.
++   * @param {Request} req - Express request (expects userId in body, optional days)
++   * @param {Response} res - Express response
++   * @returns {object} Sync result or error
++   */
++  async syncTransactions(req, res) {
++    try {
++      const { userId, days = 30 } = req.body;
++      if (!userId) {
++        return res.status(400).json({ success: false, message: 'userId is required.' });
++      }
++      
++      const result = await challengeService.syncTransactions(userId, days);
++      if (result.success) {
++        return res.status(200).json(result);
++      } else {
++        return res.status(400).json(result);
++      }
++    } catch (error) {
++      return res.status(500).json({ success: false, message: error.message });
++    }
++  },
++};
+Index: ../README.md
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+># SaveQuest\r\n\r\n**SaveQuest is built on a modern, cloud-native architecture: React frontend, Node.js backend, Firestore database, and Plaid for secure bank integration.**\r\n\r\n---\r\n\r\n## \uD83D\uDEE0\uFE0F Technical Overview\r\n\r\n- **Frontend:** React (Vite or Next.js), Tailwind CSS, Framer Motion, Plaid Link JS, hosted on Vercel\r\n- **Backend:** Node.js (Express.js), Plaid Node.js SDK, Firebase Admin SDK, REST API, hosted on Render/Railway/Cloud Run\r\n- **Database:** Firestore (Firebase, NoSQL)\r\n- **Notifications:** Firebase Cloud Messaging (FCM)\r\n- **Bank Integration:** Plaid API\r\n\r\n---\r\n\r\n## \uD83D\uDDC2\uFE0F Architecture Diagram\r\n\r\nHere’s a **textual diagram** you can drop into any drawing tool:\r\n\r\n```\r\n+----------------------------------------------------+\r\n|                    Frontend App                    |\r\n|         (React Web App or React Native)            |\r\n|                                                    |\r\n| - User Login/Signup                                |\r\n| - Plaid Link widget                                |\r\n| - Dashboard showing challenges & streaks           |\r\n| - Confetti & animations                            |\r\n| - Leaderboards                                     |\r\n| - Calls API endpoints                              |\r\n+----------------------------+-----------------------+\r\n                             |\r\n           HTTPS calls (REST APIs, JSON payloads)\r\n                             |\r\n+----------------------------v-----------------------+\r\n|                   Backend API (Node.js)            |\r\n|                  (Express.js or Fastify)           |\r\n|                                                    |\r\n| - User auth logic                                  |\r\n| - Plaid token exchange                             |\r\n| - Fetch transactions                               |\r\n| - Detect merchants (e.g. Starbucks)                |\r\n| - Challenge engine: streaks, XP, bonuses           |\r\n| - Handle Plaid webhooks                            |\r\n| - Communicate with Firestore                       |\r\n+----------------------------+-----------------------+\r\n                             |\r\n                 Firestore SDK / REST calls\r\n                             |\r\n+----------------------------v-----------------------+\r\n|                     Firestore DB                   |\r\n|                  (Firebase, NoSQL)                 |\r\n|                                                    |\r\n| - Users collection                                 |\r\n| - Challenges collection                            |\r\n| - UserChallenges collection                        |\r\n| - Savings pots                                     |\r\n| - Analytics metrics                                |\r\n+----------------------------+-----------------------+\r\n                             |\r\n           External API integrations and services\r\n                             |\r\n+----------------------------v-----------------------+\r\n|                       Plaid API                    |\r\n|                                                    |\r\n| - User bank linking                                |\r\n| - Fetch transactions from banks                    |\r\n| - Categories & merchant data                       |\r\n| - Webhooks for new transactions                    |\r\n+----------------------------------------------------+\r\n\r\n+----------------------------------------------------+\r\n|               Notifications Service                |\r\n|             (Firebase Cloud Messaging)             |\r\n|                                                    |\r\n| - Daily reminders                                  |\r\n| - Streak updates                                   |\r\n| - Completion notifications                         |\r\n+----------------------------------------------------+\r\n```\r\n\r\n---\r\n\r\n## \uD83D\uDD04 How Data Flows\r\n\r\n- User opens SaveQuest frontend\r\n- Clicks **Connect Bank** → triggers Plaid Link\r\n- Plaid returns a `public_token` → sent to backend\r\n- Backend exchanges token for permanent access token, fetches transactions, analyzes merchant/category, updates Firestore (challenges, streaks, savings)\r\n- Frontend reads data from backend API, animates progress, displays leaderboards\r\n- Notifications sent via Firebase Cloud Messaging\r\n\r\n---\r\n\r\n## \uD83D\uDCE6 Database Layer\r\n\r\nFirestore collections:\r\n\r\n```\r\nusers\r\n  - userId\r\n      email\r\n      totalSavings\r\n      XP\r\n\r\nchallenges\r\n  - challengeId\r\n      name\r\n      rules\r\n      dailyPledge\r\n\r\nuserChallenges\r\n  - composite key (userId_challengeId)\r\n      streak\r\n      status\r\n\r\ntransactions\r\n  - txnId\r\n      userId\r\n      merchantName\r\n      amount\r\n      category\r\n```\r\n\r\n---\r\n\r\n## \uD83D\uDCB8 Estimated Dev Stack Costs (MVP)\r\n\r\n| Service            | Cost                                   |\r\n| ------------------ | -------------------------------------- |\r\n| Vercel free tier   | \\$0                                    |\r\n| Render free tier   | \\$0                                    |\r\n| Firebase free tier | \\$0 (within limits)                    |\r\n| Plaid sandbox      | \\$0                                    |\r\n| Plaid production   | \\~\\$500/mo starting (depends on usage) |\r\n\r\n✅ **So your MVP can run for free, except Plaid fees once you go live.**\r\n\r\n---\r\n\r\n## ⭐ Why This Architecture Rocks\r\n\r\n✅ Node.js backend = lightweight & fast  \r\n✅ Frontend + backend both JavaScript = same language stack  \r\n✅ Firestore = serverless, scalable, real-time  \r\n✅ Plaid = secure bank data integration  \r\n✅ Cloud hosting = cheap or free for MVP\r\n\r\n---\r\n\r\n## \uD83D\uDE80 Features & User Experience\r\n\r\n- Pick savings challenges (e.g. “No Starbucks Week”)\r\n- Set your own pledge amount\r\n- Connect your bank securely via Plaid\r\n- Automatic tracking of spending and streaks\r\n- Earn rewards, XP, and bonuses for success\r\n- Visual dashboard with progress, leaderboards, and confetti\r\n\r\n---\r\n\r\n## \uD83C\uDFAF Why SaveQuest?\r\n\r\nMost people want to save money, but find it boring or hard. SaveQuest makes saving exciting by turning it into a game — with challenges, streaks, and rewards — so you build good habits and reach your goals faster.\r\n\r\n---\r\n\r\n## How SaveQuest Works\r\n\r\n1. **Pick a Challenge**\r\n   - e.g. “No Starbucks Week”, “No Uber rides for 10 days”, “Spend \\$0 this weekend”\r\n2. **Set Your Pledge**\r\n   - Decide how much to save each time you succeed (e.g. “I’ll save \\$5 every day I skip Starbucks.”)\r\n3. **Connect Your Bank Account**\r\n   - Securely link your bank using Plaid; SaveQuest reads your real transactions (with permission).\r\n4. **Track Your Spending Automatically**\r\n   - Each day, SaveQuest checks your transactions:\r\n     - If you didn’t spend at the challenge merchant → streak goes up!\r\n     - If you did spend → streak resets.\r\n5. **Get Rewarded**\r\n   - Complete a challenge to move your pledged savings into your “savings pot”, earn XP, and spin a bonus wheel.\r\n6. **See Your Progress**\r\n   - Dashboard shows total saved, current streaks, XP level, and leaderboards.\r\n\r\n---\r\n\r\n**TL;DR:**  \r\nSaveQuest uses real bank data to check if you kept your spending promises, and turns saving money into a fun, gamified experience.\r\n\r\n---\r\n\r\n# ✅ **What SaveQuest Does NOT Do**\r\n\r\n❌ It **doesn’t directly move your money** between banks (for now).  \r\n❌ It **doesn’t invest your money.**  \r\n❌ It **never takes money without your permission.**\r\n\r\n---\r\n      rules\r\n      dailyPledge\r\n\r\nuserChallenges\r\n  - composite key (userId_challengeId)\r\n      streak\r\n      status\r\n\r\ntransactions\r\n  - txnId\r\n      userId\r\n      merchantName\r\n      amount\r\n      category\r\n```\r\n\r\n---\r\n\r\n# ✅ **Plaid Integration**\r\n\r\n* Plaid Link widget launches in frontend\r\n* Frontend sends `public_token` → backend\r\n* Backend exchanges token → stores Plaid `access_token`\r\n* Periodic fetch of transactions\r\n* Webhooks for:\r\n\r\n  * New transactions\r\n  * Errors\r\n\r\n---\r\n\r\n# ✅ **Notifications Layer**\r\n\r\n* Firebase Cloud Messaging sends:\r\n\r\n  * “Don’t forget today’s challenge!”\r\n  * “You finished No Starbucks Week! \uD83C\uDF89”\r\n\r\n---\r\n\r\n# ✅ **Hosting Overview**\r\n\r\n| Layer         | Hosting                       |\r\n| ------------- | ----------------------------- |\r\n| Frontend      | Vercel                        |\r\n| Backend       | Render, Railway, or Cloud Run |\r\n| Firestore     | Firebase (GCP-managed)        |\r\n| Plaid API     | Hosted by Plaid               |\r\n| Notifications | Firebase Cloud Messaging      |\r\n\r\n---\r\n\r\n## ✅ **Scalability Plan**\r\n\r\n* Backend → stateless → horizontal scaling\r\n* Firestore auto-scales\r\n* Plaid handles millions of transactions\r\n* Frontend → globally distributed via Vercel\r\n\r\n---\r\n\r\n# ✅ **Estimated Dev Stack Costs (MVP)**\r\n\r\n| Service            | Cost                                   |\r\n| ------------------ | -------------------------------------- |\r\n| Vercel free tier   | \\$0                                    |\r\n| Render free tier   | \\$0                                    |\r\n| Firebase free tier | \\$0 (within limits)                    |\r\n| Plaid sandbox      | \\$0                                    |\r\n| Plaid production   | \\~\\$500/mo starting (depends on usage) |\r\n\r\n✅ **So your MVP can run for free, except Plaid fees once you go live.**\r\n\r\n---\r\n\r\n# ⭐ **Why This Architecture Rocks**\r\n\r\n✅ Node.js backend = lightweight & fast\r\n✅ Frontend + backend both JavaScript = same language stack\r\n✅ Firestore = serverless, scalable, real-time\r\n✅ Plaid = secure bank data integration\r\n✅ Cloud hosting = cheap or free for MVP\r\n\r\n---\r\n\r\n**TL;DR:**\r\n→ SaveQuest uses React frontend + Node.js backend + Firestore DB + Plaid.\r\n→ Everything fits in a modern, cloud-native architecture ready for MVP and scale.\r\n      rules\r\n      dailyPledge\r\n\r\nuserChallenges\r\n  - composite key (userId_challengeId)\r\n      streak\r\n      status\r\n\r\ntransactions\r\n  - txnId\r\n      userId\r\n      merchantName\r\n      amount\r\n      category\r\n```\r\n\r\n---\r\n\r\n# ✅ **Plaid Integration**\r\n\r\n* Plaid Link widget launches in frontend\r\n* Frontend sends `public_token` → backend\r\n* Backend exchanges token → stores Plaid `access_token`\r\n* Periodic fetch of transactions\r\n* Webhooks for:\r\n\r\n  * New transactions\r\n  * Errors\r\n\r\n---\r\n\r\n# ✅ **Notifications Layer**\r\n\r\n* Firebase Cloud Messaging sends:\r\n\r\n  * “Don’t forget today’s challenge!”\r\n  * “You finished No Starbucks Week! \uD83C\uDF89”\r\n\r\n---\r\n\r\n# ✅ **Hosting Overview**\r\n\r\n| Layer         | Hosting                       |\r\n| ------------- | ----------------------------- |\r\n| Frontend      | Vercel                        |\r\n| Backend       | Render, Railway, or Cloud Run |\r\n| Firestore     | Firebase (GCP-managed)        |\r\n| Plaid API     | Hosted by Plaid               |\r\n| Notifications | Firebase Cloud Messaging      |\r\n\r\n---\r\n\r\n## ✅ **Scalability Plan**\r\n\r\n* Backend → stateless → horizontal scaling\r\n* Firestore auto-scales\r\n* Plaid handles millions of transactions\r\n* Frontend → globally distributed via Vercel\r\n\r\n---\r\n\r\n# ✅ **Estimated Dev Stack Costs (MVP)**\r\n\r\n| Service            | Cost                                   |\r\n| ------------------ | -------------------------------------- |\r\n| Vercel free tier   | \\$0                                    |\r\n| Render free tier   | \\$0                                    |\r\n| Firebase free tier | \\$0 (within limits)                    |\r\n| Plaid sandbox      | \\$0                                    |\r\n| Plaid production   | \\~\\$500/mo starting (depends on usage) |\r\n\r\n✅ **So your MVP can run for free, except Plaid fees once you go live.**\r\n\r\n---\r\n\r\n# ⭐ **Why This Architecture Rocks**\r\n\r\n✅ Node.js backend = lightweight & fast\r\n✅ Frontend + backend both JavaScript = same language stack\r\n✅ Firestore = serverless, scalable, real-time\r\n✅ Plaid = secure bank data integration\r\n✅ Cloud hosting = cheap or free for MVP\r\n\r\n---\r\n\r\n**TL;DR:**\r\n→ SaveQuest uses React frontend + Node.js backend + Firestore DB + Plaid.\r\n→ Everything fits in a modern, cloud-native architecture ready for MVP and scale.\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/../README.md b/../README.md
+--- a/../README.md	(revision e7efcc2ed0a5e9a0305148f8caddaf43c85aac85)
++++ b/../README.md	(date 1752326511072)
+@@ -30,9 +30,9 @@
+ | - Leaderboards                                     |
+ | - Calls API endpoints                              |
+ +----------------------------+-----------------------+
+-                             |
+-           HTTPS calls (REST APIs, JSON payloads)
+-                             |
++               |
++       HTTPS calls (REST APIs, JSON payloads)
++               |
+ +----------------------------v-----------------------+
+ |                   Backend API (Node.js)            |
+ |                  (Express.js or Fastify)           |
+@@ -45,9 +45,9 @@
+ | - Handle Plaid webhooks                            |
+ | - Communicate with Firestore                       |
+ +----------------------------+-----------------------+
+-                             |
+-                 Firestore SDK / REST calls
+-                             |
++               |
++         Firestore SDK / REST calls
++               |
+ +----------------------------v-----------------------+
+ |                     Firestore DB                   |
+ |                  (Firebase, NoSQL)                 |
+@@ -58,9 +58,9 @@
+ | - Savings pots                                     |
+ | - Analytics metrics                                |
+ +----------------------------+-----------------------+
+-                             |
+-           External API integrations and services
+-                             |
++               |
++       External API integrations and services
++               |
+ +----------------------------v-----------------------+
+ |                       Plaid API                    |
+ |                                                    |
+@@ -100,27 +100,27 @@
+ ```
+ users
+   - userId
+-      email
+-      totalSavings
+-      XP
++    email
++    totalSavings
++    XP
+ 
+ challenges
+   - challengeId
+-      name
+-      rules
+-      dailyPledge
++    name
++    rules
++    dailyPledge
+ 
+ userChallenges
+   - composite key (userId_challengeId)
+-      streak
+-      status
++    streak
++    status
+ 
+ transactions
+   - txnId
+-      userId
+-      merchantName
+-      amount
+-      category
++    userId
++    merchantName
++    amount
++    category
+ ```
+ 
+ ---
+@@ -176,8 +176,8 @@
+    - Securely link your bank using Plaid; SaveQuest reads your real transactions (with permission).
+ 4. **Track Your Spending Automatically**
+    - Each day, SaveQuest checks your transactions:
+-     - If you didn’t spend at the challenge merchant → streak goes up!
+-     - If you did spend → streak resets.
++   - If you didn’t spend at the challenge merchant → streak goes up!
++   - If you did spend → streak resets.
+ 5. **Get Rewarded**
+    - Complete a challenge to move your pledged savings into your “savings pot”, earn XP, and spin a bonus wheel.
+ 6. **See Your Progress**
+@@ -197,23 +197,6 @@
+ ❌ It **never takes money without your permission.**
+ 
+ ---
+-      rules
+-      dailyPledge
+-
+-userChallenges
+-  - composite key (userId_challengeId)
+-      streak
+-      status
+-
+-transactions
+-  - txnId
+-      userId
+-      merchantName
+-      amount
+-      category
+-```
+-
+----
+ 
+ # ✅ **Plaid Integration**
+ 
+@@ -222,7 +205,6 @@
+ * Backend exchanges token → stores Plaid `access_token`
+ * Periodic fetch of transactions
+ * Webhooks for:
+-
+   * New transactions
+   * Errors
+ 
+@@ -231,7 +213,6 @@
+ # ✅ **Notifications Layer**
+ 
+ * Firebase Cloud Messaging sends:
+-
+   * “Don’t forget today’s challenge!”
+   * “You finished No Starbucks Week! 🎉”
+ 
+@@ -258,118 +239,8 @@
+ 
+ ---
+ 
+-# ✅ **Estimated Dev Stack Costs (MVP)**
+-
+-| Service            | Cost                                   |
+-| ------------------ | -------------------------------------- |
+-| Vercel free tier   | \$0                                    |
+-| Render free tier   | \$0                                    |
+-| Firebase free tier | \$0 (within limits)                    |
+-| Plaid sandbox      | \$0                                    |
+-| Plaid production   | \~\$500/mo starting (depends on usage) |
+-
+-✅ **So your MVP can run for free, except Plaid fees once you go live.**
+-
+----
+-
+-# ⭐ **Why This Architecture Rocks**
+-
+-✅ Node.js backend = lightweight & fast
+-✅ Frontend + backend both JavaScript = same language stack
+-✅ Firestore = serverless, scalable, real-time
+-✅ Plaid = secure bank data integration
+-✅ Cloud hosting = cheap or free for MVP
+-
+----
+-
+-**TL;DR:**
+-→ SaveQuest uses React frontend + Node.js backend + Firestore DB + Plaid.
+-→ Everything fits in a modern, cloud-native architecture ready for MVP and scale.
+-      rules
+-      dailyPledge
+-
+-userChallenges
+-  - composite key (userId_challengeId)
+-      streak
+-      status
+-
+-transactions
+-  - txnId
+-      userId
+-      merchantName
+-      amount
+-      category
+-```
+-
+----
+-
+-# ✅ **Plaid Integration**
+-
+-* Plaid Link widget launches in frontend
+-* Frontend sends `public_token` → backend
+-* Backend exchanges token → stores Plaid `access_token`
+-* Periodic fetch of transactions
+-* Webhooks for:
+-
+-  * New transactions
+-  * Errors
+-
+----
+-
+-# ✅ **Notifications Layer**
+-
+-* Firebase Cloud Messaging sends:
+-
+-  * “Don’t forget today’s challenge!”
+-  * “You finished No Starbucks Week! 🎉”
+-
+----
+-
+-# ✅ **Hosting Overview**
+-
+-| Layer         | Hosting                       |
+-| ------------- | ----------------------------- |
+-| Frontend      | Vercel                        |
+-| Backend       | Render, Railway, or Cloud Run |
+-| Firestore     | Firebase (GCP-managed)        |
+-| Plaid API     | Hosted by Plaid               |
+-| Notifications | Firebase Cloud Messaging      |
+-
+----
+-
+-## ✅ **Scalability Plan**
+-
+-* Backend → stateless → horizontal scaling
+-* Firestore auto-scales
+-* Plaid handles millions of transactions
+-* Frontend → globally distributed via Vercel
+-
+----
+-
+-# ✅ **Estimated Dev Stack Costs (MVP)**
+-
+-| Service            | Cost                                   |
+-| ------------------ | -------------------------------------- |
+-| Vercel free tier   | \$0                                    |
+-| Render free tier   | \$0                                    |
+-| Firebase free tier | \$0 (within limits)                    |
+-| Plaid sandbox      | \$0                                    |
+-| Plaid production   | \~\$500/mo starting (depends on usage) |
+-
+-✅ **So your MVP can run for free, except Plaid fees once you go live.**
+-
+----
+-
+-# ⭐ **Why This Architecture Rocks**
+-
+-✅ Node.js backend = lightweight & fast
+-✅ Frontend + backend both JavaScript = same language stack
+-✅ Firestore = serverless, scalable, real-time
+-✅ Plaid = secure bank data integration
+-✅ Cloud hosting = cheap or free for MVP
+-
+----
+-
+-**TL;DR:**
+-→ SaveQuest uses React frontend + Node.js backend + Firestore DB + Plaid.
++**TL;DR:**  
++→ SaveQuest uses React frontend + Node.js backend + Firestore DB + Plaid.  
+ → Everything fits in a modern, cloud-native architecture ready for MVP and scale.
++
++
+Index: src/server.js
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/server.js b/src/server.js
+new file mode 100644
+--- /dev/null	(date 1752289221636)
++++ b/src/server.js	(date 1752289221636)
+@@ -0,0 +1,8 @@
++const app = require('./app');
++const config = require('./config');
++
++const PORT = config.port || 5000;
++
++app.listen(PORT, () => {
++  console.log(`SaveQuest backend running on port ${PORT}`);
++});
+Index: src/services/firestoreService.js
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/services/firestoreService.js b/src/services/firestoreService.js
+new file mode 100644
+--- /dev/null	(date 1752376321833)
++++ b/src/services/firestoreService.js	(date 1752376321833)
+@@ -0,0 +1,156 @@
++/**
++ * FirestoreService handles all Firestore operations for users, transactions, challenges, and Plaid item mappings.
++ *
++ * Methods:
++ * - saveUser(userId, data): Creates or updates a user document.
++ * - getUser(userId): Retrieves a user document.
++ * - saveTransactions(userId, transactions): Stores an array of transactions for a user.
++ * - getTransactions(userId): Retrieves all transactions for a user.
++ * - saveChallengeData(userId, challengeId, challengeData): Stores challenge data for a user and challenge.
++ * - getChallengeData(userId, challengeId): Retrieves challenge data for a user and challenge.
++ * - savePlaidItemMapping(itemId, userId, accessToken): Stores Plaid item_id mapping.
++ * - getPlaidItemMapping(itemId): Retrieves Plaid item_id mapping.
++ * - getPlaidAccessTokenByUserId(userId): Finds Plaid access token by userId.
++ */
++
++const admin = require('firebase-admin');
++const config = require('../config');
++
++// Initialize Firebase Admin
++if (!admin.apps.length) {
++  admin.initializeApp({
++    credential: admin.credential.cert({
++      projectId: config.firestore.projectId,
++      clientEmail: config.firestore.clientEmail,
++      privateKey: config.firestore.privateKey,
++    }),
++    databaseURL: config.firestore.databaseURL,
++  });
++}
++
++const db = admin.firestore();
++
++
++module.exports = {
++
++  /**
++   * Stores or updates a user document in Firestore.
++   * @param {string} userId - User's unique ID
++   * @param {object} data - User data to store
++   * @returns {Promise<void>} Resolves when user is saved
++   */
++  async saveUser(userId, data) {
++    const userRef = db.collection('users').doc(userId);
++    await userRef.set(data, { merge: true });
++  },
++
++  /**
++   * Retrieves a user document from Firestore.
++   * @param {string} userId - User's unique ID
++   * @returns {Promise<object|null>} User data or null if not found
++   */
++  async getUser(userId) {
++    const userRef = db.collection('users').doc(userId);
++    const doc = await userRef.get();
++    return doc.exists ? doc.data() : null;
++  },
++
++  /**
++   * Stores an array of transactions for a user in Firestore.
++   * @param {string} userId - User's unique ID
++   * @param {Array<object>} transactions - Array of transaction objects to store
++   * @returns {Promise<void>} Resolves when transactions are saved
++   */
++  async saveTransactions(userId, transactions) {
++    // Store transactions in a subcollection 'transactions' under the user document
++    const batch = db.batch();
++    const userRef = db.collection('users').doc(userId);
++    const transactionsRef = userRef.collection('transactions');
++    // Optionally clear existing transactions for the date range, or upsert by transaction_id
++    for (const txn of transactions) {
++      if (!txn.transaction_id) continue;
++      const txnRef = transactionsRef.doc(txn.transaction_id);
++      batch.set(txnRef, txn, { merge: true });
++    }
++    await batch.commit();
++  },
++
++  /**
++   * Retrieves all transactions for a user from Firestore.
++   * @param {string} userId - User's unique ID
++   * @returns {Promise<Array<object>>} Array of transaction objects
++   */
++  async getTransactions(userId) {
++    // Retrieve all transactions for a user from the 'transactions' subcollection
++    const userRef = db.collection('users').doc(userId);
++    const transactionsRef = userRef.collection('transactions');
++    const snapshot = await transactionsRef.get();
++    return snapshot.docs.map(doc => doc.data());
++  },
++
++  /**
++   * Stores challenge data for a user and challengeId in Firestore.
++   * @param {string} userId - User's unique ID
++   * @param {string} challengeId - Challenge's unique ID
++   * @param {object} challengeData - Challenge data to store
++   * @returns {Promise<void>} Resolves when data is saved
++   */
++  async saveChallengeData(userId, challengeId, challengeData) {
++    const userRef = db.collection('users').doc(userId);
++    const challengeRef = userRef.collection('challenges').doc(challengeId);
++    await challengeRef.set(challengeData, { merge: true });
++  },
++
++  /**
++   * Retrieves challenge data for a user and challengeId from Firestore.
++   * @param {string} userId - User's unique ID
++   * @param {string} challengeId - Challenge's unique ID
++   * @returns {Promise<object|null>} Challenge data or null if not found
++   */
++  async getChallengeData(userId, challengeId) {
++    const userRef = db.collection('users').doc(userId);
++    const challengeRef = userRef.collection('challenges').doc(challengeId);
++    const doc = await challengeRef.get();
++    return doc.exists ? doc.data() : null;
++  },
++
++  /**
++   * Stores a mapping between Plaid item_id, userId, and accessToken.
++   * @param {string} itemId - Plaid item_id
++   * @param {string} userId - User's unique ID
++   * @param {string} accessToken - Plaid access token
++   * @returns {Promise<void>} Resolves when mapping is saved
++   */
++  async savePlaidItemMapping(itemId, userId, accessToken) {
++    const ref = db.collection('plaidItemMappings').doc(itemId);
++    await ref.set({ userId, accessToken }, { merge: true });
++  },
++
++  /**
++   * Retrieves the mapping for a Plaid item_id (returns userId and accessToken).
++   * @param {string} itemId - Plaid item_id
++   * @returns {Promise<{userId: string, accessToken: string}|null>} Mapping or null if not found
++   */
++  async getPlaidItemMapping(itemId) {
++    const ref = db.collection('plaidItemMappings').doc(itemId);
++    const doc = await ref.get();
++    return doc.exists ? doc.data() : null;
++  },
++
++  /**
++   * Finds a Plaid access token for a given userId.
++   * @param {string} userId - User's unique ID
++   * @returns {Promise<string|null>} Access token or null if not found
++   */
++  async getPlaidAccessTokenByUserId(userId) {
++    const mappingsRef = db.collection('plaidItemMappings');
++    const snapshot = await mappingsRef.where('userId', '==', userId).limit(1).get();
++    
++    if (snapshot.empty) {
++      return null;
++    }
++    
++    const mapping = snapshot.docs[0].data();
++    return mapping.accessToken;
++  },
++};
+Index: src/controllers/plaidController.js
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/controllers/plaidController.js b/src/controllers/plaidController.js
+new file mode 100644
+--- /dev/null	(date 1752376322484)
++++ b/src/controllers/plaidController.js	(date 1752376322484)
+@@ -0,0 +1,119 @@
++/**
++ * PlaidController handles HTTP requests related to Plaid integration.
++ * Each method is an Express route handler.
++ */
++
++const plaidService = require('../services/plaidService');
++
++module.exports = {
++  /**
++   * Generates a Plaid Link token for the frontend to initialize bank linking.
++   * @param {Request} req - Express request object (expects req.body.userId)
++   * @param {Response} res - Express response object
++   * @returns {Response} JSON with Plaid link_token and expiration info
++   */
++  async createLinkToken(req, res) {
++    try {
++      const { userId } = req.body;
++      if (!userId) {
++        return res.status(400).json({ error: 'userId is required.' });
++      }
++      const result = await plaidService.createLinkToken(userId);
++      return res.status(200).json(result);
++    } catch (err) {
++      return res.status(500).json({ error: err.message || 'Failed to create link token.' });
++    }
++  },
++
++  /**
++   * Exchanges a public token (from frontend) for a permanent access token.
++   * @param {Request} req - Express request object (expects req.body.publicToken)
++   * @param {Response} res - Express response object
++   * @returns {Response} JSON with Plaid access_token and item_id
++   */
++  async exchangePublicToken(req, res) {
++    try {
++      const { publicToken, userId } = req.body;
++      if (!publicToken) {
++        return res.status(400).json({ error: 'publicToken is required.' });
++      }
++      if (!userId) {
++        return res.status(400).json({ error: 'userId is required.' });
++      }
++      const result = await plaidService.exchangePublicToken(publicToken);
++      // Save Plaid item_id mapping to Firestore
++      const { access_token, item_id } = result;
++      if (access_token && item_id) {
++        const firestoreService = require('../services/firestoreService');
++        await firestoreService.savePlaidItemMapping(item_id, userId, access_token);
++      }
++      return res.status(200).json(result);
++    } catch (err) {
++      // Plaid error details
++      if (err.response && err.response.data) {
++        console.error('Plaid error:', err.response.data);
++        return res.status(err.response.status || 500).json({
++          error: err.response.data.error_message || 'Plaid error',
++          error_code: err.response.data.error_code,
++          error_type: err.response.data.error_type,
++          display_message: err.response.data.display_message
++        });
++      }
++      return res.status(500).json({ error: err.message || 'Failed to exchange public token.' });
++    }
++  },
++
++  /**
++   * Fetches transactions for a user from Plaid.
++   * @param {Request} req - Express request object (expects req.body.accessToken, req.body.startDate, req.body.endDate)
++   * @param {Response} res - Express response object
++   * @returns {Response} JSON with transactions, accounts, etc.
++   */
++  async getTransactions(req, res) {
++    try {
++      const { userId, accessToken, startDate, endDate } = req.body;
++      if (!userId || !accessToken || !startDate || !endDate) {
++        return res.status(400).json({ error: 'userId, accessToken, startDate, and endDate are required.' });
++      }
++      const result = await plaidService.getTransactions(userId, accessToken, startDate, endDate);
++      return res.status(200).json(result);
++    } catch (err) {
++      return res.status(500).json({ error: err.message || 'Failed to fetch transactions.' });
++    }
++  },
++
++  /**
++   * Fetches account information for a user from Plaid.
++   * @param {Request} req - Express request object (expects req.body.accessToken)
++   * @param {Response} res - Express response object
++   * @returns {Response} JSON with accounts array
++   */
++  async getAccounts(req, res) {
++    try {
++      const { accessToken } = req.body;
++      if (!accessToken) {
++        return res.status(400).json({ error: 'accessToken is required.' });
++      }
++      const result = await plaidService.getAccounts(accessToken);
++      return res.status(200).json(result);
++    } catch (err) {
++      return res.status(500).json({ error: err.message || 'Failed to fetch accounts.' });
++    }
++  },
++
++  /**
++   * Handles Plaid webhook events (e.g., new transactions, errors).
++   * @param {Request} req - Express request object (expects Plaid webhook payload in req.body)
++   * @param {Response} res - Express response object
++   * @returns {Response} Status or log message after processing
++   */
++  async handleWebhook(req, res) {
++    try {
++      const eventData = req.body;
++      const result = await plaidService.processWebhookEvent(eventData);
++      return res.status(200).json({ message: result || 'Webhook event processed.' });
++    } catch (err) {
++      return res.status(500).json({ error: err.message || 'Failed to process webhook event.' });
++    }
++  },
++};
+Index: swagger.yaml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/swagger.yaml b/swagger.yaml
+new file mode 100644
+--- /dev/null	(date 1752376323135)
++++ b/swagger.yaml	(date 1752376323135)
+@@ -0,0 +1,861 @@
++openapi: 3.0.0
++info:
++  title: SaveQuest Plaid API
++  version: 1.0.0
++  description: API endpoints for Plaid integration in SaveQuest backend
++components:
++  securitySchemes:
++    bearerAuth:
++      type: http
++      scheme: bearer
++      bearerFormat: JWT
++servers:
++  - url: http://localhost:5000
++tags:
++  - name: Plaid Endpoints
++    description: Endpoints for Plaid integration
++  - name: User Endpoints
++    description: Endpoints for user management
++  - name: Challenge Endpoints
++    description: Endpoints for user challenge participation, check-ins, and streaks
++paths:
++  /user-challenges/join:
++    post:
++      tags:
++        - Challenge Endpoints
++      summary: Enroll a user in a challenge
++      description: |
++        Enrolls a user in a challenge. Creates a userChallenge document with initial streak and status.
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema:
++              type: object
++              required:
++                - userId
++                - challengeId
++              properties:
++                userId:
++                  type: string
++                  description: Unique identifier for the user.
++                  example: "user_123"
++                challengeId:
++                  type: string
++                  description: Unique identifier for the challenge.
++                  example: "challenge_abc"
++      responses:
++        '201':
++          description: User successfully joined the challenge.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  userId:
++                    type: string
++                  challengeId:
++                    type: string
++                  streak:
++                    type: integer
++                    description: Initial streak value (should be 0 or 1)
++                  status:
++                    type: string
++                    description: Challenge status (e.g., active, completed)
++              examples:
++                success:
++                  value:
++                    userId: "user_123"
++                    challengeId: "challenge_abc"
++                    streak: 1
++                    status: "active"
++        '400':
++          description: Invalid input or user already joined.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  error:
++                    type: string
++              examples:
++                error:
++                  value:
++                    error: "User already joined this challenge."
++
++  /user-challenges/check-in:
++    post:
++      tags:
++        - Challenge Endpoints
++      summary: Daily check-in for a challenge (requires qualifying payment)
++      description: |
++        Handles a daily check-in for a user on a challenge. Updates streak and status based on check-in logic.
++        **Check-in now requires a qualifying payment (transaction) on the check-in date.**
++        If no qualifying payment is found, check-in will be rejected.
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema:
++              type: object
++              required:
++                - userId
++                - challengeId
++                - date
++              properties:
++                userId:
++                  type: string
++                  description: Unique identifier for the user.
++                  example: "user_123"
++                challengeId:
++                  type: string
++                  description: Unique identifier for the challenge.
++                  example: "challenge_abc"
++                date:
++                  type: string
++                  format: date
++                  description: ISO date string for the check-in (YYYY-MM-DD).
++                  example: "2025-07-12"
++      responses:
++        '200':
++          description: Check-in successful, streak and status updated. Includes qualifying payment details.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  userId:
++                    type: string
++                  challengeId:
++                    type: string
++                  streak:
++                    type: integer
++                    description: Updated streak value
++                  status:
++                    type: string
++                    description: Challenge status (e.g., active, completed, failed)
++                  qualifyingPayment:
++                    type: object
++                    description: The transaction that qualified this check-in
++                    properties:
++                      transaction_id:
++                        type: string
++                        example: "txn-1234"
++                      amount:
++                        type: number
++                        example: 5.25
++                      date:
++                        type: string
++                        format: date
++                        example: "2025-07-12"
++                      merchant_name:
++                        type: string
++                        example: "Starbucks"
++                      category:
++                        type: string
++                        example: "Coffee Shop"
++              examples:
++                success:
++                  value:
++                    userId: "user_123"
++                    challengeId: "challenge_abc"
++                    streak: 2
++                    status: "active"
++                    qualifyingPayment:
++                      transaction_id: "txn-1234"
++                      amount: 5.25
++                      date: "2025-07-12"
++                      merchant_name: "Starbucks"
++                      category: "Coffee Shop"
++        '400':
++          description: Invalid input, already checked in, or no qualifying payment found.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  error:
++                    type: string
++              examples:
++                error:
++                  value:
++                    error: "No qualifying payment found for this date."
++  /user-challenges/sync-transactions:
++    post:
++      tags:
++        - Challenge Endpoints
++      summary: Manually sync transactions for a user
++      description: |
++        Triggers a manual transaction sync for a user using their stored Plaid access token. This can be used if the user wants to refresh their transactions on demand.
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema:
++              type: object
++              required:
++                - userId
++              properties:
++                userId:
++                  type: string
++                  description: Unique identifier for the user.
++                  example: "user_123"
++                days:
++                  type: integer
++                  description: Number of days to sync (default: 30)
++                  example: 30
++      responses:
++        '200':
++          description: Transactions synced successfully.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  success:
++                    type: boolean
++                  message:
++                    type: string
++                  transactionCount:
++                    type: integer
++                  dateRange:
++                    type: object
++                    properties:
++                      startDate:
++                        type: string
++                        format: date
++                      endDate:
++                        type: string
++                        format: date
++              examples:
++                success:
++                  value:
++                    success: true
++                    message: "Transactions synced successfully for 30 days."
++                    transactionCount: 42
++                    dateRange:
++                      startDate: "2025-06-12"
++                      endDate: "2025-07-12"
++        '400':
++          description: Invalid input or sync failed.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  success:
++                    type: boolean
++                  message:
++                    type: string
++              examples:
++                error:
++                  value:
++                    success: false
++                    message: "No Plaid account found for this user. Please link your bank account first."
++
++  /user-challenges/{userId}/{challengeId}/streak:
++    get:
++      tags:
++        - Challenge Endpoints
++      summary: Get current streak for a user on a challenge
++      description: |
++        Returns the current streak count for a user on a specific challenge.
++      parameters:
++        - in: path
++          name: userId
++          required: true
++          schema:
++            type: string
++          description: Unique identifier for the user.
++        - in: path
++          name: challengeId
++          required: true
++          schema:
++            type: string
++          description: Unique identifier for the challenge.
++      responses:
++        '200':
++          description: Current streak count returned.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  userId:
++                    type: string
++                  challengeId:
++                    type: string
++                  streak:
++                    type: integer
++                    description: Current streak value
++              examples:
++                success:
++                  value:
++                    userId: "user_123"
++                    challengeId: "challenge_abc"
++                    streak: 5
++        '404':
++          description: User or challenge not found.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  error:
++                    type: string
++              examples:
++                error:
++                  value:
++                    error: "User or challenge not found."
++  /plaid/link-token:
++    post:
++      tags:
++        - Plaid Endpoints
++      summary: Generate a Plaid Link token
++      description: |
++        Generates a one-time Plaid Link token for the frontend to initialize the bank linking flow. The client must provide a userId in the request body. The response contains a link_token and its expiration time.
++      security:
++        - bearerAuth: []
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema:
++              type: object
++              properties:
++                userId:
++                  type: string
++                  description: Unique identifier for the user requesting the link token.
++                  example: "user_123"
++      responses:
++        '200':
++          description: Successfully generated a Plaid link_token and expiration info.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  link_token:
++                    type: string
++                    description: The generated Plaid Link token for initializing the bank linking flow.
++                    example: "link-sandbox-12345678-xxxx"
++                  expiration:
++                    type: string
++                    format: date-time
++                    description: The ISO timestamp when the link token expires.
++                    example: "2025-07-12T12:00:00Z"
++              examples:
++                success:
++                  value:
++                    link_token: "link-sandbox-12345678-xxxx"
++                    expiration: "2025-07-12T12:00:00Z"
++        '400':
++          description: Invalid or missing userId in request body.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  error:
++                    type: string
++                    description: Error message describing the problem with the request.
++              examples:
++                error:
++                  value:
++                    error: "userId is required."
++  /plaid/exchange:
++    post:
++      tags:
++        - Plaid Endpoints
++      summary: Exchange a public token for an access token
++      description: |
++        Exchanges a short-lived public_token (from Plaid Link) for a permanent access_token and item_id. The client must provide the publicToken in the request body. The access_token is required for all future Plaid API calls for this user.
++      security:
++        - bearerAuth: []
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema:
++              type: object
++              properties:
++                publicToken:
++                  type: string
++                  description: The short-lived public token received from Plaid Link.
++                  example: "public-sandbox-xxx"
++      responses:
++        '200':
++          description: Successfully exchanged public_token for access_token and item_id.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  access_token:
++                    type: string
++                    description: The permanent access token for the user's Plaid item.
++                    example: "access-sandbox-12345678-xxxx"
++                  item_id:
++                    type: string
++                    description: The Plaid item ID associated with the user's bank connection.
++                    example: "item-12345678-xxxx"
++              examples:
++                success:
++                  value:
++                    access_token: "access-sandbox-12345678-xxxx"
++                    item_id: "item-12345678-xxxx"
++        '400':
++          description: Invalid or missing publicToken in request body.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  error:
++                    type: string
++                    description: Error message describing the problem with the request.
++              examples:
++                error:
++                  value:
++                    error: "publicToken is required."
++  /plaid/transactions:
++    post:
++      tags:
++        - Plaid Endpoints
++      summary: Fetch transactions for a user
++      description: |
++        Fetches transactions and account information for a user from Plaid. The client must provide a valid userId, accessToken, startDate, and endDate in the request body. Returns an array of transactions and accounts. Also stores the transactions in Firestore for future validation.
++      security:
++        - bearerAuth: []
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema:
++              type: object
++              properties:
++                userId:
++                  type: string
++                  description: The unique user ID for whom transactions are being fetched and stored.
++                  example: "user_abc123"
++                accessToken:
++                  type: string
++                  description: The Plaid access token for the user whose transactions are being fetched.
++                  example: "access-sandbox-xxx"
++                startDate:
++                  type: string
++                  format: date
++                  description: Start date (YYYY-MM-DD) for the transaction query.
++                  example: "2024-01-01"
++                endDate:
++                  type: string
++                  format: date
++                  description: End date (YYYY-MM-DD) for the transaction query.
++                  example: "2024-01-31"
++      responses:
++        '200':
++          description: Successfully fetched transactions and accounts.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  transactions:
++                    type: array
++                    items:
++                      type: object
++                      properties:
++                        transaction_id:
++                          type: string
++                          description: Unique identifier for the transaction.
++                          example: "txn-1234"
++                        amount:
++                          type: number
++                          description: Amount of the transaction in the account's currency.
++                          example: 5.25
++                        date:
++                          type: string
++                          format: date
++                          description: Date the transaction was posted (YYYY-MM-DD).
++                          example: "2025-07-10"
++                        merchant_name:
++                          type: string
++                          description: Name of the merchant for the transaction.
++                          example: "Starbucks"
++                        category:
++                          type: string
++                          description: Category of the transaction (e.g., Coffee Shop).
++                          example: "Coffee Shop"
++                  accounts:
++                    type: array
++                    items:
++                      type: object
++                      properties:
++                        account_id:
++                          type: string
++                          description: Unique identifier for the account.
++                          example: "acc-1234"
++                        name:
++                          type: string
++                          description: Name of the account (e.g., Plaid Checking).
++                          example: "Plaid Checking"
++                        type:
++                          type: string
++                          description: Type of the account (e.g., depository, credit).
++                          example: "depository"
++                        subtype:
++                          type: string
++                          description: Subtype of the account (e.g., checking, savings).
++                          example: "checking"
++              examples:
++                success:
++                  value:
++                    transactions:
++                      - transaction_id: "txn-1234"
++                        amount: 5.25
++                        date: "2025-07-10"
++                        merchant_name: "Starbucks"
++                        category: "Coffee Shop"
++                    accounts:
++                      - account_id: "acc-1234"
++                        name: "Plaid Checking"
++                        type: "depository"
++                        subtype: "checking"
++        '400':
++          description: Invalid or missing parameters in request body.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  error:
++                    type: string
++                    description: Error message describing the problem with the request.
++              examples:
++                error:
++                  value:
++                    error: "accessToken, startDate, and endDate are required."
++  /plaid/accounts:
++    post:
++      tags:
++        - Plaid Endpoints
++      summary: Fetch account information for a user
++      description: |
++        Fetches account information for a user from Plaid. The client must provide a valid accessToken in the request body. Returns an array of accounts.
++      security:
++        - bearerAuth: []
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema:
++              type: object
++              properties:
++                accessToken:
++                  type: string
++                  description: The Plaid access token for the user whose accounts are being fetched.
++                  example: "access-sandbox-xxx"
++      responses:
++        '200':
++          description: Successfully fetched account information.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  accounts:
++                    type: array
++                    items:
++                      type: object
++                      properties:
++                        account_id:
++                          type: string
++                          description: Unique identifier for the account.
++                          example: "acc-1234"
++                        name:
++                          type: string
++                          description: Name of the account (e.g., Plaid Checking).
++                          example: "Plaid Checking"
++                        type:
++                          type: string
++                          description: Type of the account (e.g., depository, credit).
++                          example: "depository"
++                        subtype:
++                          type: string
++                          description: Subtype of the account (e.g., checking, savings).
++                          example: "checking"
++              examples:
++                success:
++                  value:
++                    accounts:
++                      - account_id: "acc-1234"
++                        name: "Plaid Checking"
++                        type: "depository"
++                        subtype: "checking"
++        '400':
++          description: Invalid or missing accessToken in request body.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  error:
++                    type: string
++                    description: Error message describing the problem with the request.
++              examples:
++                error:
++                  value:
++                    error: "accessToken is required."
++  /plaid/webhook:
++    post:
++      tags:
++        - Plaid Endpoints
++      summary: Handle Plaid webhook events
++      description: |
++        Receives webhook events from Plaid (such as new transactions, errors, or item updates). The backend processes the event and updates Firestore or logs as needed. The request body contains the webhook payload from Plaid.
++      # No security for webhook endpoint (Plaid cannot send JWT)
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema:
++              type: object
++      responses:
++        '200':
++          description: Webhook event processed successfully.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  message:
++                    type: string
++                    description: Status message indicating the webhook was processed.
++                    example: "Webhook event processed."
++              examples:
++                success:
++                  value:
++                    message: "Webhook event processed."
++        '400':
++          description: Invalid webhook payload or processing error.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  error:
++                    type: string
++                    description: Error message describing the problem with the request.
++              examples:
++                error:
++                  value:
++                    error: "Invalid webhook payload."
++
++  # User Endpoints
++  /users:
++    post:
++      tags:
++        - User Endpoints
++      summary: Create a new user
++      description: |
++        Creates a new user in the database. Fails if a user with the same userId already exists.
++      operationId: createUser
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema:
++              type: object
++              required:
++                - userId
++                - name
++                - email
++              properties:
++                userId:
++                  type: string
++                  description: Unique identifier for the user.
++                  example: "user_123"
++                name:
++                  type: string
++                  description: Name of the user.
++                  example: "Alice"
++                email:
++                  type: string
++                  description: Email address of the user.
++                  example: "alice@example.com"
++      responses:
++        '201':
++          description: User created successfully.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  userId:
++                    type: string
++                  name:
++                    type: string
++                  email:
++                    type: string
++              examples:
++                success:
++                  value:
++                    userId: "user_123"
++                    name: "Alice"
++                    email: "alice@example.com"
++        '400':
++          description: Invalid input or user already exists.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  error:
++                    type: string
++              examples:
++                error:
++                  value:
++                    error: "User already exists."
++
++  /users/{userId}:
++    get:
++      tags:
++        - User Endpoints
++      summary: Get user by userId
++      description: |
++        Retrieves a user by their userId.
++      operationId: getUser
++      parameters:
++        - in: path
++          name: userId
++          required: true
++          schema:
++            type: string
++          description: Unique identifier for the user.
++      responses:
++        '200':
++          description: User found.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  userId:
++                    type: string
++                  name:
++                    type: string
++                  email:
++                    type: string
++              examples:
++                success:
++                  value:
++                    userId: "user_123"
++                    name: "Alice"
++                    email: "alice@example.com"
++        '404':
++          description: User not found.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  error:
++                    type: string
++              examples:
++                error:
++                  value:
++                    error: "User not found."
++
++    delete:
++      tags:
++        - User Endpoints
++      summary: Delete user by userId
++      description: |
++        Deletes a user from the database by their userId.
++      operationId: deleteUser
++      parameters:
++        - in: path
++          name: userId
++          required: true
++          schema:
++            type: string
++          description: Unique identifier for the user.
++      responses:
++        '204':
++          description: User deleted successfully. No content returned.
++        '404':
++          description: User not found.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  error:
++                    type: string
++              examples:
++                error:
++                  value:
++                    error: "User not found."
++
++    put:
++      tags:
++        - User Endpoints
++      summary: Update user by userId
++      description: |
++        Updates an existing user's information. Fails if the user does not exist.
++      operationId: updateUser
++      parameters:
++        - in: path
++          name: userId
++          required: true
++          schema:
++            type: string
++          description: Unique identifier for the user.
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema:
++              type: object
++              properties:
++                name:
++                  type: string
++                  description: Updated name of the user.
++                  example: "Alice Smith"
++                email:
++                  type: string
++                  description: Updated email address of the user.
++                  example: "alice.smith@example.com"
++      responses:
++        '200':
++          description: User updated successfully.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  userId:
++                    type: string
++                  name:
++                    type: string
++                  email:
++                    type: string
++              examples:
++                success:
++                  value:
++                    userId: "user_123"
++                    name: "Alice Smith"
++                    email: "alice.smith@example.com"
++        '404':
++          description: User not found.
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  error:
++                    type: string
++              examples:
++                error:
++                  value:
++                    error: "User not found."
+Index: .idea/workspace.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<project version=\"4\">\r\n  <component name=\"AutoImportSettings\">\r\n    <option name=\"autoReloadType\" value=\"SELECTIVE\" />\r\n  </component>\r\n  <component name=\"ChangeListManager\">\r\n    <list default=\"true\" id=\"fd062545-9dd7-4a01-bc0e-89ab0055cacd\" name=\"Changes\" comment=\"\" />\r\n    <option name=\"SHOW_DIALOG\" value=\"false\" />\r\n    <option name=\"HIGHLIGHT_CONFLICTS\" value=\"true\" />\r\n    <option name=\"HIGHLIGHT_NON_ACTIVE_CHANGELIST\" value=\"false\" />\r\n    <option name=\"LAST_RESOLUTION\" value=\"IGNORE\" />\r\n  </component>\r\n  <component name=\"ProjectColorInfo\"><![CDATA[{\r\n  \"associatedIndex\": 7\r\n}]]></component>\r\n  <component name=\"ProjectId\" id=\"2zhRigwwo6jZu9j2JrlASRMXrCO\" />\r\n  <component name=\"ProjectViewState\">\r\n    <option name=\"hideEmptyMiddlePackages\" value=\"true\" />\r\n    <option name=\"showLibraryContents\" value=\"true\" />\r\n  </component>\r\n  <component name=\"PropertiesComponent\"><![CDATA[{\r\n  \"keyToString\": {\r\n    \"ModuleVcsDetector.initialDetectionPerformed\": \"true\",\r\n    \"RunOnceActivity.ShowReadmeOnStart\": \"true\",\r\n    \"RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager\": \"true\",\r\n    \"ignore.virus.scanning.warn.message\": \"true\",\r\n    \"junie.onboarding.icon.badge.shown\": \"true\",\r\n    \"last_opened_file_path\": \"E:/project/saveQuest/savequest-backend\",\r\n    \"node.js.detected.package.eslint\": \"true\",\r\n    \"node.js.detected.package.tslint\": \"true\",\r\n    \"node.js.selected.package.eslint\": \"(autodetect)\",\r\n    \"node.js.selected.package.tslint\": \"(autodetect)\",\r\n    \"nodejs_package_manager_path\": \"npm\",\r\n    \"vue.rearranger.settings.migration\": \"true\"\r\n  }\r\n}]]></component>\r\n  <component name=\"SharedIndexes\">\r\n    <attachedChunks>\r\n      <set>\r\n        <option value=\"bundled-js-predefined-d6986cc7102b-09060db00ec0-JavaScript-WS-251.26927.40\" />\r\n      </set>\r\n    </attachedChunks>\r\n  </component>\r\n  <component name=\"TaskManager\">\r\n    <task active=\"true\" id=\"Default\" summary=\"Default task\">\r\n      <changelist id=\"fd062545-9dd7-4a01-bc0e-89ab0055cacd\" name=\"Changes\" comment=\"\" />\r\n      <created>1752181446694</created>\r\n      <option name=\"number\" value=\"Default\" />\r\n      <option name=\"presentableId\" value=\"Default\" />\r\n      <updated>1752181446694</updated>\r\n      <workItem from=\"1752181447773\" duration=\"1259000\" />\r\n    </task>\r\n    <servers />\r\n  </component>\r\n  <component name=\"TypeScriptGeneratedFilesManager\">\r\n    <option name=\"version\" value=\"3\" />\r\n  </component>\r\n</project>
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/.idea/workspace.xml b/.idea/workspace.xml
+--- a/.idea/workspace.xml	(revision e7efcc2ed0a5e9a0305148f8caddaf43c85aac85)
++++ b/.idea/workspace.xml	(date 1752335198087)
+@@ -4,15 +4,21 @@
+     <option name="autoReloadType" value="SELECTIVE" />
+   </component>
+   <component name="ChangeListManager">
+-    <list default="true" id="fd062545-9dd7-4a01-bc0e-89ab0055cacd" name="Changes" comment="" />
++    <list default="true" id="fd062545-9dd7-4a01-bc0e-89ab0055cacd" name="Changes" comment="">
++      <change beforePath="$PROJECT_DIR$/../README.md" beforeDir="false" afterPath="$PROJECT_DIR$/../README.md" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
++    </list>
+     <option name="SHOW_DIALOG" value="false" />
+     <option name="HIGHLIGHT_CONFLICTS" value="true" />
+     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+     <option name="LAST_RESOLUTION" value="IGNORE" />
+   </component>
+-  <component name="ProjectColorInfo"><![CDATA[{
+-  "associatedIndex": 7
+-}]]></component>
++  <component name="Git.Settings">
++    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$/.." />
++  </component>
++  <component name="ProjectColorInfo">{
++  &quot;associatedIndex&quot;: 7
++}</component>
+   <component name="ProjectId" id="2zhRigwwo6jZu9j2JrlASRMXrCO" />
+   <component name="ProjectViewState">
+     <option name="hideEmptyMiddlePackages" value="true" />
+@@ -21,8 +27,11 @@
+   <component name="PropertiesComponent"><![CDATA[{
+   "keyToString": {
+     "ModuleVcsDetector.initialDetectionPerformed": "true",
++    "Node.js.server.js.executor": "Run",
+     "RunOnceActivity.ShowReadmeOnStart": "true",
+     "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager": "true",
++    "RunOnceActivity.git.unshallow": "true",
++    "git-widget-placeholder": "master",
+     "ignore.virus.scanning.warn.message": "true",
+     "junie.onboarding.icon.badge.shown": "true",
+     "last_opened_file_path": "E:/project/saveQuest/savequest-backend",
+@@ -48,7 +57,8 @@
+       <option name="number" value="Default" />
+       <option name="presentableId" value="Default" />
+       <updated>1752181446694</updated>
+-      <workItem from="1752181447773" duration="1259000" />
++      <workItem from="1752181447773" duration="3086000" />
++      <workItem from="1752326401352" duration="947000" />
+     </task>
+     <servers />
+   </component>
+Index: src/services/userService.js
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/services/userService.js b/src/services/userService.js
+new file mode 100644
+--- /dev/null	(date 1752335662180)
++++ b/src/services/userService.js	(date 1752335662180)
+@@ -0,0 +1,92 @@
++/**
++ * UserService encapsulates all Firestore logic for user management.
++ * Each method performs a specific Firestore operation.
++ */
++
++const db = require('./firestoreService');
++
++module.exports = {
++  /**
++   * Creates a new user document in Firestore.
++   * @param {string} userId - Unique user identifier
++   * @param {object} userData - User data to store (email, XP, etc.)
++   * @returns {Promise<object>} Created user document or error
++   */
++  async createUser(userId, userData) {
++    try {
++      const userRef = db.collection('users').doc(userId);
++      const doc = await userRef.get();
++      if (doc.exists) {
++        const error = new Error('User already exists');
++        error.code = 409;
++        throw error;
++      }
++      await userRef.set(userData);
++      const newDoc = await userRef.get();
++      return { id: newDoc.id, ...newDoc.data() };
++    } catch (err) {
++      throw new Error(`Failed to create user: ${err.message}`);
++    }
++  },
++
++  /**
++   * Retrieves a user document from Firestore.
++   * @param {string} userId - Unique user identifier
++   * @returns {Promise<object>} User document or null if not found
++   */
++  async getUser(userId) {
++    try {
++      const doc = await db.collection('users').doc(userId).get();
++      if (!doc.exists) {
++        const error = new Error('User not found');
++        error.code = 404;
++        throw error;
++      }
++      return { id: doc.id, ...doc.data() };
++    } catch (err) {
++      throw new Error(`Failed to get user: ${err.message}`);
++    }
++  },
++
++  /**
++   * Updates a user document in Firestore (optional).
++   * @param {string} userId - Unique user identifier
++   * @param {object} updates - Fields to update
++   * @returns {Promise<object>} Updated user document or error
++   */
++  async updateUser(userId, updates) {
++    try {
++      const userRef = db.collection('users').doc(userId);
++      const doc = await userRef.get();
++      if (!doc.exists) {
++        const error = new Error('User does not exist');
++        error.code = 404;
++        throw error;
++      }
++      await userRef.update(updates);
++      const updatedDoc = await userRef.get();
++      return { id: updatedDoc.id, ...updatedDoc.data() };
++    } catch (err) {
++      throw new Error(`Failed to update user: ${err.message}`);
++    }
++  },
++  /**
++   * Deletes a user document from Firestore.
++   * @param {string} userId - Unique user identifier
++   * @returns {Promise<void>} Resolves if deleted, throws error if not found
++   */
++  async deleteUser(userId) {
++    try {
++      const userRef = db.collection('users').doc(userId);
++      const doc = await userRef.get();
++      if (!doc.exists) {
++        const error = new Error('User not found');
++        error.code = 404;
++        throw error;
++      }
++      await userRef.delete();
++    } catch (err) {
++      throw new Error(`Failed to delete user: ${err.message}`);
++    }
++  },
++};
+Index: src/controllers/userController.js
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/controllers/userController.js b/src/controllers/userController.js
+new file mode 100644
+--- /dev/null	(date 1752335661545)
++++ b/src/controllers/userController.js	(date 1752335661545)
+@@ -0,0 +1,79 @@
++/**
++ * UserController handles HTTP requests related to user management (registration, profile, updates).
++ * Each method is an Express route handler.
++ */
++
++const userService = require('../services/userService');
++
++module.exports = {
++  /**
++   * Creates a new user in Firestore.
++   */
++  async createUser(req, res) {
++    try {
++      const { userId, ...userData } = req.body;
++      if (!userId) {
++        return res.status(400).json({ error: 'userId is required.' });
++      }
++      const user = await userService.createUser(userId, userData);
++      return res.status(201).json(user);
++    } catch (err) {
++      return res.status(400).json({ error: err.message || 'Failed to create user.' });
++    }
++  },
++
++  /**
++   * Deletes a user from Firestore.
++   */
++  async deleteUser(req, res) {
++    try {
++      const userId = req.params.userId;
++      if (!userId) {
++        return res.status(400).json({ error: 'userId is required in URL.' });
++      }
++      await userService.deleteUser(userId);
++      return res.status(204).send();
++    } catch (err) {
++      return res.status(400).json({ error: err.message || 'Failed to delete user.' });
++    }
++  },
++
++  /**
++   * Retrieves user data from Firestore.
++   */
++  async getUser(req, res) {
++    try {
++      const userId = req.params.userId || req.query.userId;
++      if (!userId) {
++        return res.status(400).json({ error: 'userId is required.' });
++      }
++      const user = await userService.getUser(userId);
++      if (!user) {
++        return res.status(404).json({ error: 'User not found.' });
++      }
++      return res.status(200).json(user);
++    } catch (err) {
++      return res.status(500).json({ error: err.message || 'Failed to get user.' });
++    }
++  },
++
++  /**
++   * Updates user details in Firestore.
++   */
++  async updateUser(req, res) {
++    try {
++      const userId = req.params.userId;
++      const updates = req.body;
++      if (!userId) {
++        return res.status(400).json({ error: 'userId is required in URL.' });
++      }
++      if (!updates || Object.keys(updates).length === 0) {
++        return res.status(400).json({ error: 'No update fields provided.' });
++      }
++      const user = await userService.updateUser(userId, updates);
++      return res.status(200).json(user);
++    } catch (err) {
++      return res.status(400).json({ error: err.message || 'Failed to update user.' });
++    }
++  },
++};
+Index: src/config/index.js
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/config/index.js b/src/config/index.js
+new file mode 100644
+--- /dev/null	(date 1752283820502)
++++ b/src/config/index.js	(date 1752283820502)
+@@ -0,0 +1,21 @@
++/**
++ * Loads and exports environment variables and configuration for Plaid and Firestore.
++ * Used throughout the backend for API keys, secrets, and service URLs.
++ */
++require('dotenv').config();
++
++module.exports = {
++  plaid: {
++    clientId: process.env.PLAID_CLIENT_ID,
++    secret: process.env.PLAID_SECRET,
++    env: process.env.PLAID_ENV,
++    webhookUrl: process.env.WEBHOOK_URL,
++  },
++  firestore: {
++    projectId: process.env.FIREBASE_PROJECT_ID,
++    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
++    privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
++    databaseURL: process.env.FIREBASE_DATABASE_URL,
++  },
++  port: process.env.PORT || 5000,
++};
+Index: src/services/plaidService.js
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/services/plaidService.js b/src/services/plaidService.js
+new file mode 100644
+--- /dev/null	(date 1752376321149)
++++ b/src/services/plaidService.js	(date 1752376321149)
+@@ -0,0 +1,133 @@
++const firestoreService = require('./firestoreService');
++/**
++ * PlaidService encapsulates all Plaid API logic.
++ * Each method corresponds to a specific Plaid API call or webhook handler.
++ */
++
++const { Configuration, PlaidApi, PlaidEnvironments } = require('plaid');
++const config = require('../config');
++
++const plaidClient = new PlaidApi(
++  new Configuration({
++    basePath: PlaidEnvironments[config.plaid.env],
++    baseOptions: {
++      headers: {
++        'PLAID-CLIENT-ID': config.plaid.clientId,
++        'PLAID-SECRET': config.plaid.secret,
++      },
++    },
++  })
++);
++
++class PlaidService {
++
++  /**
++   * Generates a Plaid Link token for the frontend to initialize bank linking.
++   * @param {string} userId - The unique user identifier.
++   * @returns {Promise<object>} Plaid Link token object (contains link_token and expiration info)
++   */
++  async createLinkToken(userId) {
++    // Generates a Plaid Link token for the frontend (webhook temporarily disabled)
++    const response = await plaidClient.linkTokenCreate({
++      user: { client_user_id: userId },
++      client_name: 'SaveQuest',
++      products: ['transactions'],
++      country_codes: ['US'],
++      language: 'en',
++      webhook: config.plaid.webhookUrl, // Disabled for now
++    });
++    return response.data;
++  }
++
++
++  /**
++   * Exchanges a public token (from frontend) for a permanent access token.
++   * @param {string} publicToken - The public token received from Plaid Link.
++   * @returns {Promise<object>} Plaid access token object (contains access_token and item_id)
++   */
++  async exchangePublicToken(publicToken) {
++    // Exchanges a public token for an access token
++    const response = await plaidClient.itemPublicTokenExchange({ public_token: publicToken });
++    return response.data;
++  }
++
++
++  /**
++   * Fetches transactions for a user from Plaid and stores them in Firestore.
++   * @param {string} userId - The unique user identifier.
++   * @param {string} accessToken - The user's Plaid access token.
++   * @param {string} startDate - Start date for transactions (YYYY-MM-DD).
++   * @param {string} endDate - End date for transactions (YYYY-MM-DD).
++   * @returns {Promise<object>} Plaid transactions response (contains transactions, accounts, etc.)
++   */
++  async getTransactions(userId, accessToken, startDate, endDate) {
++    // Fetches transactions for a user
++    const response = await plaidClient.transactionsGet({
++      access_token: accessToken,
++      start_date: startDate,
++      end_date: endDate,
++      options: { count: 100, offset: 0 },
++    });
++    // Save transactions to Firestore
++    if (userId && response.data && response.data.transactions) {
++      await firestoreService.saveTransactions(userId, response.data.transactions);
++    }
++    return response.data;
++  }
++
++
++  /**
++   * Fetches account information for a user from Plaid.
++   * @param {string} accessToken - The user's Plaid access token.
++   * @returns {Promise<object>} Accounts response object (contains accounts array)
++   */
++  async getAccounts(accessToken) {
++    // Fetches account information for a user
++    const response = await plaidClient.accountsGet({ access_token: accessToken });
++    return response.data;
++  }
++
++
++  /**
++   * Handles Plaid webhook events (e.g., new transactions, errors).
++   * @param {object} eventData - The webhook event payload from Plaid.
++   * @returns {Promise<void>|Promise<string>} Usually nothing (void), but may return a status or log message after processing
++   */
++  async processWebhookEvent(eventData) {
++    // Handles Plaid webhook events (e.g., new transactions, errors)
++    if (eventData.webhook_type === 'TRANSACTIONS' && eventData.webhook_code === 'DEFAULT_UPDATE') {
++      // Look up userId and accessToken by item_id using the mapping we stored
++      const itemId = eventData.item_id;
++      
++      try {
++        const mapping = await firestoreService.getPlaidItemMapping(itemId);
++        if (!mapping || !mapping.userId || !mapping.accessToken) {
++          console.warn('No mapping found for item_id:', itemId);
++          return 'Webhook received: no mapping found for item_id.';
++        }
++
++        const { userId, accessToken } = mapping;
++        
++        // Calculate date range for fetching recent transactions (last 30 days)
++        const endDate = new Date().toISOString().split('T')[0]; // Today in YYYY-MM-DD
++        const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]; // 30 days ago
++        
++        // Fetch and store the updated transactions
++        await this.getTransactions(userId, accessToken, startDate, endDate);
++        
++        console.log('Successfully processed webhook for user:', userId, 'item:', itemId);
++        return 'Webhook processed: transactions updated for user.';
++        
++      } catch (error) {
++        console.error('Error processing webhook for item_id:', itemId, error);
++        return 'Webhook error: failed to process transaction update.';
++      }
++    }
++    
++    // Handle other webhook types as needed
++    console.log('Webhook received:', eventData.webhook_type, eventData.webhook_code);
++    return 'Webhook event received.';
++  }
++}
++
++module.exports = new PlaidService();
