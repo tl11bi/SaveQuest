@@ -30,9 +30,9 @@ Here’s a **textual diagram** you can drop into any drawing tool:
 | - Leaderboards                                     |
 | - Calls API endpoints                              |
 +----------------------------+-----------------------+
-                             |
-           HTTPS calls (REST APIs, JSON payloads)
-                             |
+               |
+       HTTPS calls (REST APIs, JSON payloads)
+               |
 +----------------------------v-----------------------+
 |                   Backend API (Node.js)            |
 |                  (Express.js or Fastify)           |
@@ -45,9 +45,9 @@ Here’s a **textual diagram** you can drop into any drawing tool:
 | - Handle Plaid webhooks                            |
 | - Communicate with Firestore                       |
 +----------------------------+-----------------------+
-                             |
-                 Firestore SDK / REST calls
-                             |
+               |
+         Firestore SDK / REST calls
+               |
 +----------------------------v-----------------------+
 |                     Firestore DB                   |
 |                  (Firebase, NoSQL)                 |
@@ -58,9 +58,9 @@ Here’s a **textual diagram** you can drop into any drawing tool:
 | - Savings pots                                     |
 | - Analytics metrics                                |
 +----------------------------+-----------------------+
-                             |
-           External API integrations and services
-                             |
+               |
+       External API integrations and services
+               |
 +----------------------------v-----------------------+
 |                       Plaid API                    |
 |                                                    |
@@ -100,27 +100,27 @@ Firestore collections:
 ```
 users
   - userId
-      email
-      totalSavings
-      XP
+    email
+    totalSavings
+    XP
 
 challenges
   - challengeId
-      name
-      rules
-      dailyPledge
+    name
+    rules
+    dailyPledge
 
 userChallenges
   - composite key (userId_challengeId)
-      streak
-      status
+    streak
+    status
 
 transactions
   - txnId
-      userId
-      merchantName
-      amount
-      category
+    userId
+    merchantName
+    amount
+    category
 ```
 
 ---
@@ -176,8 +176,8 @@ Most people want to save money, but find it boring or hard. SaveQuest makes savi
    - Securely link your bank using Plaid; SaveQuest reads your real transactions (with permission).
 4. **Track Your Spending Automatically**
    - Each day, SaveQuest checks your transactions:
-     - If you didn’t spend at the challenge merchant → streak goes up!
-     - If you did spend → streak resets.
+   - If you didn’t spend at the challenge merchant → streak goes up!
+   - If you did spend → streak resets.
 5. **Get Rewarded**
    - Complete a challenge to move your pledged savings into your “savings pot”, earn XP, and spin a bonus wheel.
 6. **See Your Progress**
@@ -197,23 +197,6 @@ SaveQuest uses real bank data to check if you kept your spending promises, and t
 ❌ It **never takes money without your permission.**
 
 ---
-      rules
-      dailyPledge
-
-userChallenges
-  - composite key (userId_challengeId)
-      streak
-      status
-
-transactions
-  - txnId
-      userId
-      merchantName
-      amount
-      category
-```
-
----
 
 # ✅ **Plaid Integration**
 
@@ -222,7 +205,6 @@ transactions
 * Backend exchanges token → stores Plaid `access_token`
 * Periodic fetch of transactions
 * Webhooks for:
-
   * New transactions
   * Errors
 
@@ -231,7 +213,6 @@ transactions
 # ✅ **Notifications Layer**
 
 * Firebase Cloud Messaging sends:
-
   * “Don’t forget today’s challenge!”
   * “You finished No Starbucks Week! 🎉”
 
@@ -258,118 +239,8 @@ transactions
 
 ---
 
-# ✅ **Estimated Dev Stack Costs (MVP)**
-
-| Service            | Cost                                   |
-| ------------------ | -------------------------------------- |
-| Vercel free tier   | \$0                                    |
-| Render free tier   | \$0                                    |
-| Firebase free tier | \$0 (within limits)                    |
-| Plaid sandbox      | \$0                                    |
-| Plaid production   | \~\$500/mo starting (depends on usage) |
-
-✅ **So your MVP can run for free, except Plaid fees once you go live.**
-
----
-
-# ⭐ **Why This Architecture Rocks**
-
-✅ Node.js backend = lightweight & fast
-✅ Frontend + backend both JavaScript = same language stack
-✅ Firestore = serverless, scalable, real-time
-✅ Plaid = secure bank data integration
-✅ Cloud hosting = cheap or free for MVP
-
----
-
-**TL;DR:**
-→ SaveQuest uses React frontend + Node.js backend + Firestore DB + Plaid.
+**TL;DR:**  
+→ SaveQuest uses React frontend + Node.js backend + Firestore DB + Plaid.  
 → Everything fits in a modern, cloud-native architecture ready for MVP and scale.
-      rules
-      dailyPledge
 
-userChallenges
-  - composite key (userId_challengeId)
-      streak
-      status
 
-transactions
-  - txnId
-      userId
-      merchantName
-      amount
-      category
-```
-
----
-
-# ✅ **Plaid Integration**
-
-* Plaid Link widget launches in frontend
-* Frontend sends `public_token` → backend
-* Backend exchanges token → stores Plaid `access_token`
-* Periodic fetch of transactions
-* Webhooks for:
-
-  * New transactions
-  * Errors
-
----
-
-# ✅ **Notifications Layer**
-
-* Firebase Cloud Messaging sends:
-
-  * “Don’t forget today’s challenge!”
-  * “You finished No Starbucks Week! 🎉”
-
----
-
-# ✅ **Hosting Overview**
-
-| Layer         | Hosting                       |
-| ------------- | ----------------------------- |
-| Frontend      | Vercel                        |
-| Backend       | Render, Railway, or Cloud Run |
-| Firestore     | Firebase (GCP-managed)        |
-| Plaid API     | Hosted by Plaid               |
-| Notifications | Firebase Cloud Messaging      |
-
----
-
-## ✅ **Scalability Plan**
-
-* Backend → stateless → horizontal scaling
-* Firestore auto-scales
-* Plaid handles millions of transactions
-* Frontend → globally distributed via Vercel
-
----
-
-# ✅ **Estimated Dev Stack Costs (MVP)**
-
-| Service            | Cost                                   |
-| ------------------ | -------------------------------------- |
-| Vercel free tier   | \$0                                    |
-| Render free tier   | \$0                                    |
-| Firebase free tier | \$0 (within limits)                    |
-| Plaid sandbox      | \$0                                    |
-| Plaid production   | \~\$500/mo starting (depends on usage) |
-
-✅ **So your MVP can run for free, except Plaid fees once you go live.**
-
----
-
-# ⭐ **Why This Architecture Rocks**
-
-✅ Node.js backend = lightweight & fast
-✅ Frontend + backend both JavaScript = same language stack
-✅ Firestore = serverless, scalable, real-time
-✅ Plaid = secure bank data integration
-✅ Cloud hosting = cheap or free for MVP
-
----
-
-**TL;DR:**
-→ SaveQuest uses React frontend + Node.js backend + Firestore DB + Plaid.
-→ Everything fits in a modern, cloud-native architecture ready for MVP and scale.

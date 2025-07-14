@@ -2,7 +2,13 @@ openapi: 3.0.0
 info:
   title: SaveQuest Plaid API
   version: 1.0.0
-  description: API endpoints for Plaid integration in SaveQuest backend
+  description: |
+    API endpoints for Plaid integration in SaveQuest backend.
+    
+    **Authentication:**
+    - All routes (except `/plaid/webhook`) require a Bearer JWT (Firebase ID token) in the `Authorization` header.
+    - Example: `Authorization: Bearer <Firebase ID token>`
+    - The `/plaid/webhook` endpoint is public for Plaid to send events.
 components:
   securitySchemes:
     bearerAuth:
@@ -11,6 +17,8 @@ components:
       bearerFormat: JWT
 servers:
   - url: http://localhost:5000
+security:
+  - bearerAuth: []
 tags:
   - name: Plaid Endpoints
     description: Endpoints for Plaid integration
@@ -610,10 +618,10 @@ paths:
     post:
       tags:
         - Plaid Endpoints
-      summary: Handle Plaid webhook events
+      summary: Handle Plaid webhook events (public, no auth)
       description: |
-        Receives webhook events from Plaid (such as new transactions, errors, or item updates). The backend processes the event and updates Firestore or logs as needed. The request body contains the webhook payload from Plaid.
-      # No security for webhook endpoint (Plaid cannot send JWT)
+        Receives webhook events from Plaid (such as new transactions, errors, or item updates). This endpoint is public and does **not** require authentication.
+      security: []
       requestBody:
         required: true
         content:
