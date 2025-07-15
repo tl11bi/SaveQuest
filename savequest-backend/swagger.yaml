@@ -201,8 +201,6 @@ paths:
           application/json:
             schema:
               type: object
-              required:
-                - userId
               properties:
                 userId:
                   type: string
@@ -210,8 +208,10 @@ paths:
                   example: "user_123"
                 days:
                   type: integer
-                  description: Number of days to sync (default: 30)
+                  description: Number of days to sync
                   example: 30
+              required:
+                - userId
       responses:
         '200':
           description: Transactions synced successfully.
@@ -377,7 +377,7 @@ paths:
         - Plaid Endpoints
       summary: Exchange a public token for an access token
       description: |
-        Exchanges a short-lived public_token (from Plaid Link) for a permanent access_token and item_id. The client must provide the publicToken in the request body. The access_token is required for all future Plaid API calls for this user.
+        Exchanges a short-lived public_token (from Plaid Link) for a permanent access_token and item_id. The client must provide the publicToken and userId in the request body. The access_token is required for all future Plaid API calls for this user.
       security:
         - bearerAuth: []
       requestBody:
@@ -391,6 +391,10 @@ paths:
                   type: string
                   description: The short-lived public token received from Plaid Link.
                   example: "public-sandbox-xxx"
+                userId:
+                  type: string
+                  description: Unique identifier for the user.
+                  example: "user_123"
       responses:
         '200':
           description: Successfully exchanged public_token for access_token and item_id.
@@ -413,7 +417,7 @@ paths:
                     access_token: "access-sandbox-12345678-xxxx"
                     item_id: "item-12345678-xxxx"
         '400':
-          description: Invalid or missing publicToken in request body.
+          description: Invalid or missing publicToken or userId in request body.
           content:
             application/json:
               schema:
@@ -425,7 +429,7 @@ paths:
               examples:
                 error:
                   value:
-                    error: "publicToken is required."
+                    error: "publicToken and userId are required."
   /plaid/transactions:
     post:
       tags:
