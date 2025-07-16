@@ -1,4 +1,61 @@
 import React from 'react';
+import axios from 'axios';
+
+// --- Sync Transactions Modal ---
+const SyncTransactionsModal: React.FC<{ closeModal: () => void }> = ({ closeModal }) => {
+  const [loading, setLoading] = React.useState(false);
+  const [result, setResult] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const userId = localStorage.getItem('userId');
+
+  const handleSync = async () => {
+    if (!userId) {
+      setError('User ID not found. Please sign in again.');
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      // Get JWT from localStorage (assume stored as 'token')
+      const token = localStorage.getItem('token');
+      const res = await axios.post(
+        `${import.meta.env.VITE_API_BASE_URL}/user-challenges/sync-transactions`,
+        { userId, days: 90 },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (res.data.success) {
+        setResult(res.data.message || 'Transactions synced successfully!');
+      } else {
+        setError(res.data.message || 'Sync failed.');
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.message || 'Sync failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div>
+      <div style={{ fontWeight: 700, fontSize: 20, marginBottom: 12 }}>Sync Transactions</div>
+      <div style={{ color: '#666', fontSize: 15, marginBottom: 16 }}>
+        Click below to manually sync your latest transactions from your linked bank account.
+      </div>
+      {result && <div style={{ color: 'green', marginBottom: 12 }}>{result}</div>}
+      {error && <div style={{ color: 'red', marginBottom: 12 }}>{error}</div>}
+      <button
+        onClick={handleSync}
+        disabled={loading}
+        style={{
+          background: '#1976d2', color: '#fff', border: 'none', borderRadius: 6, padding: '10px 24px', fontWeight: 600, fontSize: 16, cursor: loading ? 'not-allowed' : 'pointer', marginBottom: 8
+        }}
+      >
+        {loading ? 'Syncing...' : 'Sync Now'}
+      </button>
+    </div>
+  );
+};
 
 interface DashboardModalsProps {
   modal: null | 'join' | 'view' | 'link' | 'sync';
@@ -58,13 +115,14 @@ const DashboardModals: React.FC<DashboardModalsProps> = ({ modal, closeModal }) 
           <div style={{ fontWeight: 700, fontSize: 20, marginBottom: 12 }}>Link Your Bank</div>
           <div style={{ color: '#666', fontSize: 15 }}>Feature coming soon!</div>
         </div>}
-        {modal === 'sync' && <div>
-          <div style={{ fontWeight: 700, fontSize: 20, marginBottom: 12 }}>Sync Transactions</div>
-          <div style={{ color: '#666', fontSize: 15 }}>Feature coming soon!</div>
-        </div>}
+        {modal === 'sync' && <SyncTransactionsModal closeModal={closeModal} />}
       </div>
     </div>
   );
+
+// ...existing code...
 };
 
-export default DashboardModals;
+
+// ...existing code...
+export { DashboardModals };

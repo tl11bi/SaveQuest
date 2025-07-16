@@ -7,6 +7,29 @@ const plaidService = require('../services/plaidService');
 
 module.exports = {
   /**
+   * Test endpoint: Returns Plaid access token for a given userId.
+   * @route POST /plaid/test-access-token
+   * @param {Request} req - Express request object (expects req.body.userId)
+   * @param {Response} res - Express response object
+   * @returns {Response} JSON with accessToken or error
+   */
+  async testAccessToken(req, res) {
+    try {
+      const { userId } = req.body;
+      if (!userId) {
+        return res.status(400).json({ error: 'userId is required.' });
+      }
+      const firestoreService = require('../services/firestoreService');
+      const accessToken = await firestoreService.getPlaidAccessTokenByUserId(userId);
+      if (!accessToken) {
+        return res.status(404).json({ error: 'No access token found for this user.' });
+      }
+      return res.status(200).json({ accessToken });
+    } catch (err) {
+      return res.status(500).json({ error: err.message || 'Failed to get access token.' });
+    }
+  },
+  /**
    * Generates a Plaid Link token for the frontend to initialize bank linking.
    * @param {Request} req - Express request object (expects req.body.userId)
    * @param {Response} res - Express response object
