@@ -29,6 +29,7 @@ app.post('/plaid/link-token', plaidController.createLinkToken);
 app.post('/plaid/exchange', plaidController.exchangePublicToken);
 app.post('/plaid/transactions', plaidController.getTransactions);
 app.post('/plaid/accounts', plaidController.getAccounts);
+app.post('/plaid/test-access-token', plaidController.testAccessToken);
 // Plaid webhook must remain public
 app.post('/plaid/webhook', plaidController.handleWebhook);
 

@@ -32,6 +32,15 @@ const db = admin.firestore();
 
 
 module.exports = {
+  /**
+   * Deletes a user document from Firestore.
+   * @param {string} userId - User's unique ID
+   * @returns {Promise<void>} Resolves when user is deleted
+   */
+  async deleteUser(userId) {
+    const userRef = db.collection('users').doc(userId);
+    await userRef.delete();
+  },
 
   /**
    * Stores or updates a user document in Firestore.

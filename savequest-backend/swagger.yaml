@@ -27,6 +27,72 @@ tags:
   - name: Challenge Endpoints
     description: Endpoints for user challenge participation, check-ins, and streaks
 paths:
+  /plaid/test-access-token:
+    post:
+      tags:
+        - Plaid Endpoints
+      summary: Test Plaid access token retrieval by userId
+      description: |
+        Returns the Plaid access token for a given userId. Useful for debugging and verifying Plaid item mappings.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userId:
+                  type: string
+                  description: Unique identifier for the user.
+                  example: "user_123"
+            required:
+              - userId
+      responses:
+        '200':
+          description: Successfully retrieved Plaid access token.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessToken:
+                    type: string
+                    description: The Plaid access token for the user.
+                    example: "access-sandbox-xxx"
+              examples:
+                success:
+                  value:
+                    accessToken: "access-sandbox-xxx"
+        '400':
+          description: Invalid or missing userId in request body.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: Error message describing the problem with the request.
+              examples:
+                error:
+                  value:
+                    error: "userId is required."
+        '404':
+          description: No access token found for this user.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: Error message if no access token is found.
+              examples:
+                error:
+                  value:
+                    error: "No access token found for this user."
   /user-challenges/join:
     post:
       tags:
@@ -703,18 +769,34 @@ paths:
               schema:
                 type: object
                 properties:
-                  userId:
+                  uid:
                     type: string
-                  name:
+                  displayName:
                     type: string
                   email:
                     type: string
+                  photoURL:
+                    type: string
+                  providerId:
+                    type: string
+                  phoneNumber:
+                    type: string
+                  emailVerified:
+                    type: boolean
+                  updatedAt:
+                    type: string
+                    format: date-time
               examples:
                 success:
                   value:
-                    userId: "user_123"
-                    name: "Alice"
-                    email: "alice@example.com"
+                    uid: "ZnOrsnQcdwgFO3ELvWOKmp3tUi53"
+                    displayName: "Connor Li"
+                    email: "connor@example.com"
+                    photoURL: "https://lh3.googleusercontent.com/a-/AOh14Gg..."
+                    providerId: "google.com"
+                    phoneNumber: "+1234567890"
+                    emailVerified: true
+                    updatedAt: "2025-07-15T12:00:00Z"
         '400':
           description: Invalid input or user already exists.
           content:
@@ -795,6 +877,19 @@ paths:
       responses:
         '204':
           description: User deleted successfully. No content returned.
+        '400':
+          description: Invalid userId or request.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+              examples:
+                error:
+                  value:
+                    error: "userId is required."
         '404':
           description: User not found.
           content:

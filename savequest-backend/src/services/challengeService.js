@@ -180,7 +180,7 @@ module.exports = {
    * @param {number} days - Number of days to sync (default: 30)
    * @returns {Promise<object>} Success with transaction count or error
    */
-  async syncTransactions(userId, days = 30) {
+  async syncTransactions(userId, days = 90) {
     try {
       // First, we need to find the user's Plaid access token
       // We'll look through all plaid item mappings to find one for this user

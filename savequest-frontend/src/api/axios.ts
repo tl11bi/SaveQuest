@@ -85,5 +85,12 @@ class ApiService {
   }
 }
 
+
 const apiService = new ApiService();
+
+// Sync transactions for a user
+export async function syncTransactions(userId: string, days: number = 30) {
+  return apiService.post('/user-challenges/sync-transactions', { userId, days });
+}
+
 export default apiService;

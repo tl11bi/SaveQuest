@@ -7,37 +7,48 @@ const userService = require('../services/userService');
 
 module.exports = {
   /**
-   * Creates a new user in Firestore.
-   */
-  async createUser(req, res) {
-    try {
-      const { userId, ...userData } = req.body;
-      if (!userId) {
-        return res.status(400).json({ error: 'userId is required.' });
-      }
-      const user = await userService.createUser(userId, userData);
-      return res.status(201).json(user);
-    } catch (err) {
-      return res.status(400).json({ error: err.message || 'Failed to create user.' });
-    }
-  },
-
-  /**
    * Deletes a user from Firestore.
    */
   async deleteUser(req, res) {
     try {
       const userId = req.params.userId;
       if (!userId) {
-        return res.status(400).json({ error: 'userId is required in URL.' });
+        return res.status(400).json({ error: 'userId is required.' });
       }
-      await userService.deleteUser(userId);
+      const firestoreService = require('../services/firestoreService');
+      await firestoreService.deleteUser(userId);
       return res.status(204).send();
     } catch (err) {
-      return res.status(400).json({ error: err.message || 'Failed to delete user.' });
+      return res.status(500).json({ error: err.message || 'Failed to delete user.' });
     }
   },
+  // ...existing code...
 
+  /**
+   * Deletes a user from Firestore.
+   */
+  async createUser(req, res) {
+    try {
+      const { uid, displayName, email, photoURL, providerId, phoneNumber, emailVerified } = req.body;
+      if (!uid || !displayName || !email) {
+        return res.status(400).json({ error: 'uid, displayName, and email are required.' });
+      }
+      const firestoreService = require('../services/firestoreService');
+      const userData = {
+        displayName,
+        email,
+        photoURL: photoURL || '',
+        providerId: providerId || '',
+        phoneNumber: phoneNumber || '',
+        emailVerified: !!emailVerified,
+        updatedAt: new Date().toISOString(),
+      };
+      await firestoreService.saveUser(uid, userData);
+      return res.status(201).json({ uid, ...userData });
+    } catch (err) {
+      return res.status(500).json({ error: err.message || 'Failed to create user.' });
+    }
+  },
   /**
    * Retrieves user data from Firestore.
    */

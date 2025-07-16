@@ -34,12 +34,48 @@ const FirebaseAuth: React.FC<FirebaseAuthProps> = ({ onLogin }) => {
       if (firebaseUser) {
         const token = await firebaseUser.getIdToken();
         apiService.setAuthToken(token);
+        // Store user ID in localStorage for use in other components
+        localStorage.setItem('userId', firebaseUser.uid);
+        localStorage.setItem('token', token);
+        
+        // Debug: Log user profile information
+        console.log('Firebase User Profile:', {
+          displayName: firebaseUser.displayName,
+          photoURL: firebaseUser.photoURL,
+          email: firebaseUser.email
+        });
+
+        // Save user profile to backend
+        try {
+          await fetch(`${import.meta.env.VITE_API_BASE_URL}/users`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              uid: firebaseUser.uid,
+              displayName: firebaseUser.displayName,
+              email: firebaseUser.email,
+              photoURL: firebaseUser.photoURL,
+              providerId: firebaseUser.providerId,
+              phoneNumber: firebaseUser.phoneNumber,
+              emailVerified: firebaseUser.emailVerified,
+            }),
+          });
+        } catch (err) {
+          console.error('Failed to save user to backend:', err);
+        }
+        
         onLogin({
           name: firebaseUser.displayName || '',
           photo: firebaseUser.photoURL || '',
         });
       } else {
         apiService.setAuthToken(null);
+        // Clear stored user data on sign out
+        localStorage.removeItem('userId');
+        localStorage.removeItem('token');
       }
       setLoading(false);
     });
@@ -48,10 +84,18 @@ const FirebaseAuth: React.FC<FirebaseAuthProps> = ({ onLogin }) => {
 
   const handleSignIn = async () => {
     const provider = new GoogleAuthProvider();
+    // Add scopes to ensure we get profile information
+    provider.addScope('profile');
+    provider.addScope('email');
     try {
-      await signInWithPopup(auth, provider);
+      const result = await signInWithPopup(auth, provider);
+      // Force refresh to get updated profile info
+      if (result.user) {
+        await result.user.reload();
+      }
       // Token is set in onAuthStateChanged
     } catch (error) {
+      console.error('Sign-in error:', error);
       alert('Sign-in failed.');
     }
   };
@@ -60,6 +104,9 @@ const FirebaseAuth: React.FC<FirebaseAuthProps> = ({ onLogin }) => {
     try {
       await signOut(auth);
       apiService.setAuthToken(null);
+      // Clear stored user data
+      localStorage.removeItem('userId');
+      localStorage.removeItem('token');
     } catch (error) {
       alert('Sign-out failed.');
     }
