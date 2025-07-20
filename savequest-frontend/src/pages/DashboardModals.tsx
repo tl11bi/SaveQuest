@@ -1,61 +1,33 @@
 import React from 'react';
 import axios from 'axios';
+import { getAvailableChallenges, joinChallenge, getUserChallenges, checkInChallenge } from '../api/axios';
+import { JoinChallengeModal } from './modals/JoinChallengeModal';
+import { ViewChallengesModal } from './modals/ViewChallengesModal';
+import { SyncTransactionsModal } from './modals/SyncTransactionsModal';
 
-// --- Sync Transactions Modal ---
-const SyncTransactionsModal: React.FC<{ closeModal: () => void }> = ({ closeModal }) => {
-  const [loading, setLoading] = React.useState(false);
-  const [result, setResult] = React.useState<string | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
-  const userId = localStorage.getItem('userId');
+// Challenge interface based on the API spec
 
-  const handleSync = async () => {
-    if (!userId) {
-      setError('User ID not found. Please sign in again.');
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    setResult(null);
-    try {
-      // Get JWT from localStorage (assume stored as 'token')
-      const token = localStorage.getItem('token');
-      const res = await axios.post(
-        `${import.meta.env.VITE_API_BASE_URL}/user-challenges/sync-transactions`,
-        { userId, days: 90 },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (res.data.success) {
-        setResult(res.data.message || 'Transactions synced successfully!');
-      } else {
-        setError(res.data.message || 'Sync failed.');
-      }
-    } catch (err: any) {
-      setError(err?.response?.data?.message || 'Sync failed.');
-    } finally {
-      setLoading(false);
-    }
-  };
+// Challenge interface based on the API spec
+interface Challenge {
+  id: string;
+  title: string;
+  description: string;
+  ruleType: 'spend_block' | 'spend_cap' | 'replacement' | 'streak_goal';
+  duration: number;
+  difficulty: 'easy' | 'medium' | 'hard';
+}
 
-  return (
-    <div>
-      <div style={{ fontWeight: 700, fontSize: 20, marginBottom: 12 }}>Sync Transactions</div>
-      <div style={{ color: '#666', fontSize: 15, marginBottom: 16 }}>
-        Click below to manually sync your latest transactions from your linked bank account.
-      </div>
-      {result && <div style={{ color: 'green', marginBottom: 12 }}>{result}</div>}
-      {error && <div style={{ color: 'red', marginBottom: 12 }}>{error}</div>}
-      <button
-        onClick={handleSync}
-        disabled={loading}
-        style={{
-          background: '#1976d2', color: '#fff', border: 'none', borderRadius: 6, padding: '10px 24px', fontWeight: 600, fontSize: 16, cursor: loading ? 'not-allowed' : 'pointer', marginBottom: 8
-        }}
-      >
-        {loading ? 'Syncing...' : 'Sync Now'}
-      </button>
-    </div>
-  );
-};
+// User Challenge interface
+interface UserChallenge {
+  userChallengeId: string;
+  userId: string;
+  challengeId: string;
+  streak: number;
+  status: string;
+  joinedAt?: string;
+  lastCheckIn?: string;
+  challengeTemplate: Challenge;
+}
 
 interface DashboardModalsProps {
   modal: null | 'join' | 'view' | 'link' | 'sync';
@@ -82,6 +54,8 @@ const modalBox: React.CSSProperties = {
   padding: 32,
   minWidth: 320,
   maxWidth: '90vw',
+  maxHeight: '90vh',
+  overflowY: 'auto',
   textAlign: 'center',
   position: 'relative',
 };
@@ -103,14 +77,8 @@ const DashboardModals: React.FC<DashboardModalsProps> = ({ modal, closeModal }) 
     <div style={modalBackdrop} onClick={closeModal}>
       <div style={modalBox} onClick={e => e.stopPropagation()}>
         <button style={closeBtn} onClick={closeModal} aria-label="Close">×</button>
-        {modal === 'join' && <div>
-          <div style={{ fontWeight: 700, fontSize: 20, marginBottom: 12 }}>Join a Challenge</div>
-          <div style={{ color: '#666', fontSize: 15 }}>Feature coming soon!</div>
-        </div>}
-        {modal === 'view' && <div>
-          <div style={{ fontWeight: 700, fontSize: 20, marginBottom: 12 }}>Your Challenges</div>
-          <div style={{ color: '#666', fontSize: 15 }}>Feature coming soon!</div>
-        </div>}
+        {modal === 'join' && <JoinChallengeModal closeModal={closeModal} />}
+        {modal === 'view' && <ViewChallengesModal closeModal={closeModal} />}
         {modal === 'link' && <div>
           <div style={{ fontWeight: 700, fontSize: 20, marginBottom: 12 }}>Link Your Bank</div>
           <div style={{ color: '#666', fontSize: 15 }}>Feature coming soon!</div>
@@ -119,8 +87,6 @@ const DashboardModals: React.FC<DashboardModalsProps> = ({ modal, closeModal }) 
       </div>
     </div>
   );
-
-// ...existing code...
 };
 
 

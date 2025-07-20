@@ -34,9 +34,13 @@ app.post('/plaid/test-access-token', plaidController.testAccessToken);
 app.post('/plaid/webhook', plaidController.handleWebhook);
 
 // Challenge endpoints
+app.get('/challenges', challengeController.getAllChallenges);
+app.post('/challenges/seed', challengeController.seedSampleChallenges);
+app.get('/user-challenges/:userId', challengeController.getUserChallenges);
 app.post('/user-challenges/join', challengeController.joinChallenge);
 app.post('/user-challenges/check-in', challengeController.checkIn);
 app.get('/user-challenges/:userId/:challengeId/streak', challengeController.getStreak);
+app.get('/user-challenges/:userId/:challengeId/evaluate', challengeController.evaluateChallenge);
 app.post('/user-challenges/sync-transactions', challengeController.syncTransactions);
 
 module.exports = app;

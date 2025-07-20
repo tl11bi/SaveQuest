@@ -93,6 +93,110 @@ paths:
                 error:
                   value:
                     error: "No access token found for this user."
+
+
+  /user-challenges/{userId}:
+    get:
+      tags:
+        - Challenge Endpoints
+      summary: Get all challenges that a user has joined
+      description: |
+        Returns a list of all challenges that the user has joined, including challenge details and current status.
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+          description: Unique identifier for the user.
+      responses:
+        '200':
+          description: Successfully retrieved user's challenges.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  challenges:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        userChallengeId:
+                          type: string
+                        userId:
+                          type: string
+                        challengeId:
+                          type: string
+                        streak:
+                          type: integer
+                        status:
+                          type: string
+                        joinedAt:
+                          type: string
+                          format: date-time
+                        lastCheckIn:
+                          type: string
+                          format: date-time
+                        challengeTemplate:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            title:
+                              type: string
+                            description:
+                              type: string
+                            ruleType:
+                              type: string
+                            duration:
+                              type: integer
+                            difficulty:
+                              type: string
+              examples:
+                success:
+                  value:
+                    success: true
+                    challenges:
+                      - userChallengeId: "uc_123"
+                        userId: "user_123"
+                        challengeId: "no-fast-food-7d"
+                        streak: 3
+                        status: "active"
+                        joinedAt: "2025-07-15T10:00:00Z"
+                        lastCheckIn: "2025-07-18T08:30:00Z"
+                        challengeTemplate:
+                          id: "no-fast-food-7d"
+                          title: "No Fast Food for 7 Days"
+                          description: "Avoid all fast food purchases for one week"
+                          ruleType: "spend_block"
+                          duration: 7
+                          difficulty: "easy"
+        '400':
+          description: Invalid userId.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        '500':
+          description: Server error.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
   /user-challenges/join:
     post:
       tags:
@@ -381,6 +485,199 @@ paths:
                 error:
                   value:
                     error: "User or challenge not found."
+  /challenges:
+    get:
+      tags:
+        - Challenge Endpoints
+      summary: Get all available challenge templates
+      description: |
+        Returns a list of all available challenge templates that users can join.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Successfully retrieved challenges.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  challenges:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        title:
+                          type: string
+                        description:
+                          type: string
+                        ruleType:
+                          type: string
+                          enum: ['spend_block', 'spend_cap', 'replacement', 'streak_goal']
+                        duration:
+                          type: integer
+                        difficulty:
+                          type: string
+                          enum: ['easy', 'medium', 'hard']
+              examples:
+                success:
+                  value:
+                    success: true
+                    challenges:
+                      - id: "no-fast-food-7d"
+                        title: "No Fast Food for 7 Days"
+                        description: "Avoid all fast food purchases for one week"
+                        ruleType: "spend_block"
+                        duration: 7
+                        difficulty: "easy"
+        '500':
+          description: Server error.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+  /challenges/seed:
+    post:
+      tags:
+        - Challenge Endpoints
+      summary: Seed sample challenges into database
+      description: |
+        Loads the predefined sample challenges into the Firestore challenges collection. 
+        This is typically used during development or initial setup.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Successfully seeded challenges.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+              examples:
+                success:
+                  value:
+                    success: true
+                    message: "Sample challenges have been successfully seeded into the database."
+        '500':
+          description: Failed to seed challenges.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+              examples:
+                error:
+                  value:
+                    success: false
+                    message: "Failed to seed challenges: Error details"
+  /user-challenges/{userId}/{challengeId}/evaluate:
+    get:
+      tags:
+        - Challenge Endpoints
+      summary: Evaluate challenge rules for a user
+      description: |
+        Evaluates whether a user has broken challenge rules based on their recent transactions, without performing a check-in.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Unique identifier for the user.
+        - name: challengeId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Unique identifier for the challenge.
+      responses:
+        '200':
+          description: Challenge evaluation completed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  ruleBroken:
+                    type: boolean
+                  reason:
+                    type: string
+                  evaluatedTransactions:
+                    type: integer
+                  challengeTemplate:
+                    type: object
+                    properties:
+                      ruleType:
+                        type: string
+                      duration:
+                        type: integer
+                      title:
+                        type: string
+              examples:
+                success:
+                  value:
+                    success: true
+                    ruleBroken: false
+                    reason: ""
+                    evaluatedTransactions: 15
+                    challengeTemplate:
+                      ruleType: "spend_block"
+                      duration: 7
+                      title: "No Fast Food for 7 Days"
+                failure:
+                  value:
+                    success: true
+                    ruleBroken: true
+                    reason: "Spent on blocked category/merchant: McDonald's"
+                    evaluatedTransactions: 15
+                    challengeTemplate:
+                      ruleType: "spend_block"
+                      duration: 7
+                      title: "No Fast Food for 7 Days"
+        '400':
+          description: Invalid request or challenge evaluation failed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        '500':
+          description: Server error.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
   /plaid/link-token:
     post:
       tags:
