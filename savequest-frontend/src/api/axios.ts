@@ -93,4 +93,29 @@ export async function syncTransactions(userId: string, days: number = 30) {
   return apiService.post('/user-challenges/sync-transactions', { userId, days });
 }
 
+// Get all available challenges
+export async function getAvailableChallenges() {
+  return apiService.get('/challenges');
+}
+
+// Join a challenge
+export async function joinChallenge(userId: string, challengeId: string) {
+  return apiService.post('/user-challenges/join', { userId, challengeId });
+}
+
+// Get user's joined challenges (we'll need to create this endpoint)
+export async function getUserChallenges(userId: string) {
+  return apiService.get(`/user-challenges/${userId}`);
+}
+
+// Get streak for a specific challenge
+export async function getChallengeStreak(userId: string, challengeId: string) {
+  return apiService.get(`/user-challenges/${userId}/${challengeId}/streak`);
+}
+
+// Check in to a challenge
+export async function checkInChallenge(userId: string, challengeId: string, date: string) {
+  return apiService.post('/user-challenges/check-in', { userId, challengeId, date });
+}
+
 export default apiService;
