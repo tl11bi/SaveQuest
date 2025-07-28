@@ -4,19 +4,50 @@
 
 import * as React from 'react';
 import styles from './DashboardStyles';
-import { challenges, activity } from './dashboardData';
 import { DashboardModals } from './DashboardModals';
 import PlaidLinkModal from './PlaidLinkModal';
+import { getUserChallenges, checkInChallenge, getUserTransactions } from '../api/axios';
 
 interface DashboardProps {
   user: { name: string; photo: string };
   onSignOut: () => void;
 }
 
+interface UserChallenge {
+  challengeId: string;
+  status?: string;
+  streak: number;
+  lastCheckIn?: string;
+  challengeTemplate: {
+    title: string;
+    description: string;
+    ruleType: string;
+    duration: number;
+    difficulty: string;
+  };
+}
+
+interface Transaction {
+  transaction_id: string;
+  amount: number;
+  date: string;
+  authorized_date?: string;
+  merchant_name?: string;
+  personal_finance_category?: {
+    primary?: string;
+    detailed?: string;
+  };
+  account_id: string;
+}
 
 const Dashboard: React.FC<DashboardProps> = ({ user, onSignOut }) => {
   const [modal, setModal] = React.useState<null | 'join' | 'view' | 'link' | 'sync'>(null);
   const [plaidOpen, setPlaidOpen] = React.useState(false);
+  const [userChallenges, setUserChallenges] = React.useState<UserChallenge[]>([]);
+  const [loadingChallenges, setLoadingChallenges] = React.useState(true);
+  const [checkingIn, setCheckingIn] = React.useState<string | null>(null);
+  const [recentTransactions, setRecentTransactions] = React.useState<Transaction[]>([]);
+  const [loadingTransactions, setLoadingTransactions] = React.useState(true);
 
   // Debug: Log user data to see what we're receiving
   React.useEffect(() => {
@@ -24,6 +55,136 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSignOut }) => {
     console.log('User photo URL:', user.photo);
     console.log('Is user.photo truthy?', !!user.photo);
   }, [user]);
+
+  // Load user challenges
+  React.useEffect(() => {
+    const loadUserChallenges = async () => {
+      const userId = localStorage.getItem('userId');
+      if (!userId) {
+        setLoadingChallenges(false);
+        return;
+      }
+      
+      try {
+        const token = localStorage.getItem('token');
+        if (token) {
+          const apiService = (await import('../api/axios')).default;
+          apiService.setAuthToken(token);
+        }
+        const response = await getUserChallenges(userId);
+        if (response.data.success) {
+          // Only show active challenges on the main dashboard
+          const activeChallenges = (response.data.challenges || []).filter(
+            (challenge: UserChallenge) => challenge.status === 'active' || !challenge.status
+          );
+          setUserChallenges(activeChallenges);
+        }
+      } catch (err) {
+        console.error('Failed to load user challenges:', err);
+      } finally {
+        setLoadingChallenges(false);
+      }
+    };
+    loadUserChallenges();
+  }, []);
+
+  // Load recent transactions
+  React.useEffect(() => {
+    const loadRecentTransactions = async () => {
+      const userId = localStorage.getItem('userId');
+      if (!userId) {
+        console.log('No userId found for transactions');
+        setLoadingTransactions(false);
+        return;
+      }
+      
+      console.log('Loading transactions for userId:', userId);
+      
+      try {
+        const token = localStorage.getItem('token');
+        if (token) {
+          const apiService = (await import('../api/axios')).default;
+          apiService.setAuthToken(token);
+        }
+        const response = await getUserTransactions(userId);
+        console.log('Transactions API response:', response);
+        if (response.data.success) {
+          console.log('Transactions loaded:', response.data.transactions);
+          setRecentTransactions(response.data.transactions || []);
+        } else {
+          console.log('Transactions API returned success=false:', response.data);
+        }
+      } catch (err) {
+        console.error('Failed to load transactions:', err);
+      } finally {
+        setLoadingTransactions(false);
+      }
+    };
+    loadRecentTransactions();
+  }, []);
+
+  const formatTransactionDate = (transaction: Transaction) => {
+    const date = transaction.authorized_date || transaction.date;
+    return new Date(date).toLocaleDateString();
+  };
+
+  const formatTransactionAmount = (amount: number) => {
+    return `$${Math.abs(amount).toFixed(2)}`;
+  };
+
+  const getTransactionDescription = (transaction: Transaction) => {
+    const merchant = transaction.merchant_name || 'Unknown Merchant';
+    const amount = formatTransactionAmount(transaction.amount);
+    const date = formatTransactionDate(transaction);
+    return `${merchant} ${amount} (${date})`;
+  };
+
+  const handleQuickCheckIn = async (challengeId: string, challengeTitle: string) => {
+    const userId = localStorage.getItem('userId');
+    if (!userId) {
+      alert('User ID not found. Please sign in again.');
+      return;
+    }
+    setCheckingIn(challengeId);
+    try {
+      const response = await checkInChallenge(userId, challengeId);
+      if (response.status === 200) {
+        alert(`Check-in successful for "${challengeTitle}"!`);
+        // Refresh challenges
+        const refreshResponse = await getUserChallenges(userId);
+        if (refreshResponse.data.success) {
+          const activeChallenges = (refreshResponse.data.challenges || []).filter(
+            (challenge: UserChallenge) => challenge.status === 'active' || !challenge.status
+          );
+          setUserChallenges(activeChallenges);
+        }
+      }
+    } catch (err: any) {
+      const errorData = err?.response?.data;
+      if (errorData?.challengeFailed) {
+        alert(`Challenge "${challengeTitle}" has failed: ${errorData.message || 'Rule violation detected'}. You can rejoin in the View Challenges section.`);
+      } else {
+        alert(errorData?.message || 'Check-in failed.');
+      }
+      // Refresh challenges to get updated status
+      try {
+        const userId = localStorage.getItem('userId');
+        if (userId) {
+          const refreshResponse = await getUserChallenges(userId);
+          if (refreshResponse.data.success) {
+            const activeChallenges = (refreshResponse.data.challenges || []).filter(
+              (challenge: UserChallenge) => challenge.status === 'active' || !challenge.status
+            );
+            setUserChallenges(activeChallenges);
+          }
+        }
+      } catch (refreshErr) {
+        console.error('Failed to refresh challenges:', refreshErr);
+      }
+    } finally {
+      setCheckingIn(null);
+    }
+  };
 
   const openModal = (type: typeof modal) => {
     if (type === 'link') {
@@ -84,28 +245,100 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSignOut }) => {
         <button style={styles.quickBtn as React.CSSProperties} onClick={() => openModal('sync')}>Sync Transactions</button>
       </div>
       <div style={styles.challengesSection as React.CSSProperties}>
-        {challenges.map((c: { name: string; streak: number }, i: number) => (
-          <div key={i} style={styles.challengeCardModern as React.CSSProperties}>
-            <div style={styles.challengeName as React.CSSProperties}>{c.name}</div>
-            <div style={styles.challengeStreak as React.CSSProperties}>Streak: <span style={styles.streakNum as React.CSSProperties}>{c.streak} 🔥</span></div>
-            <button style={styles.checkInBtn as React.CSSProperties} onClick={() => openModal('view')}>Check In</button>
+        {loadingChallenges ? (
+          <div style={{ textAlign: 'center', padding: '20px', color: '#666' }}>
+            Loading your challenges...
           </div>
-        ))}
+        ) : userChallenges.length > 0 ? (
+          userChallenges.map((challenge: UserChallenge, i: number) => (
+            <div key={i} style={styles.challengeCardModern as React.CSSProperties}>
+              <div style={styles.challengeName as React.CSSProperties}>{challenge.challengeTemplate.title}</div>
+              <div style={styles.challengeStreak as React.CSSProperties}>Streak: <span style={styles.streakNum as React.CSSProperties}>{challenge.streak} 🔥</span></div>
+              <button 
+                style={{
+                  ...styles.checkInBtn as React.CSSProperties,
+                  cursor: checkingIn === challenge.challengeId ? 'not-allowed' : 'pointer',
+                  opacity: checkingIn === challenge.challengeId ? 0.6 : 1
+                }} 
+                onClick={() => handleQuickCheckIn(challenge.challengeId, challenge.challengeTemplate.title)}
+                disabled={checkingIn === challenge.challengeId}
+              >
+                {checkingIn === challenge.challengeId ? 'Checking in...' : 'Check In'}
+              </button>
+            </div>
+          ))
+        ) : (
+          <div style={{ textAlign: 'center', padding: '20px', color: '#666' }}>
+            No active challenges. <br />
+            <button 
+              style={{ 
+                background: '#1976d2', 
+                color: '#fff', 
+                border: 'none', 
+                borderRadius: 6, 
+                padding: '8px 16px', 
+                marginTop: '10px',
+                cursor: 'pointer'
+              }}
+              onClick={() => openModal('join')}
+            >
+              Join Your First Challenge
+            </button>
+          </div>
+        )}
       </div>
       <div style={styles.activityCard as React.CSSProperties}>
         <div style={styles.activityTitle as React.CSSProperties}>Recent Activity</div>
-        <ul style={styles.activityList as React.CSSProperties}>
-          {activity.map((a: { desc: string }, i: number) => (
-            <li key={i} style={{ ...(styles.activityItem as React.CSSProperties), borderBottom: i !== activity.length - 1 ? '1px solid #f0f0f0' : 'none' }}>{a.desc}</li>
-          ))}
-        </ul>
+        {(() => {
+          console.log('Activity section - loadingTransactions:', loadingTransactions);
+          console.log('Activity section - recentTransactions:', recentTransactions);
+          console.log('Activity section - recentTransactions.length:', recentTransactions.length);
+          
+          if (loadingTransactions) {
+            return (
+              <div style={{ textAlign: 'center', padding: '20px', color: '#666' }}>
+                Loading transactions...
+              </div>
+            );
+          } else if (recentTransactions.length > 0) {
+            return (
+              <ul style={styles.activityList as React.CSSProperties}>
+                {recentTransactions.slice(0, 5).map((transaction: Transaction, i: number) => (
+                  <li 
+                    key={transaction.transaction_id} 
+                    style={{ 
+                      ...(styles.activityItem as React.CSSProperties), 
+                      borderBottom: i !== Math.min(recentTransactions.length, 5) - 1 ? '1px solid #f0f0f0' : 'none' 
+                    }}
+                  >
+                    {getTransactionDescription(transaction)}
+                  </li>
+                ))}
+              </ul>
+            );
+          } else {
+            return (
+              <div style={{ textAlign: 'center', padding: '20px', color: '#666' }}>
+                No recent transactions. <br />
+                <button 
+                  style={{ 
+                    background: '#1976d2', 
+                    color: '#fff', 
+                    border: 'none', 
+                    borderRadius: 6, 
+                    padding: '8px 16px', 
+                    marginTop: '10px',
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => openModal('sync')}
+                >
+                  Sync Transactions
+                </button>
+              </div>
+            );
+          }
+        })(        )}
       </div>
-      <nav style={styles.bottomNav as React.CSSProperties}>
-        <button style={styles.navBtn as React.CSSProperties}>Home</button>
-        <button style={styles.navBtn as React.CSSProperties}>Challenges</button>
-        <button style={styles.navBtn as React.CSSProperties}>Transactions</button>
-        <button style={styles.navBtn as React.CSSProperties}>Profile</button>
-      </nav>
       <DashboardModals modal={modal} closeModal={closeModal} />
       <PlaidLinkModal
         userId={localStorage.getItem('userId') || ''}

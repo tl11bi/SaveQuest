@@ -1,6 +1,6 @@
 import * as React from 'react';
 import FirebaseAuth from './auth/FirebaseAuth';
-import Dashboard from './pages/Dashboard';
+import MainApp from './pages/MainApp';
 
 
 import { useState } from 'react';
@@ -21,7 +21,7 @@ function App() {
   return (
     <div>
       {user ? (
-        <Dashboard user={user} onSignOut={handleSignOut} />
+        <MainApp user={user} onSignOut={handleSignOut} />
       ) : (
         <FirebaseAuth onLogin={setUser} />
       )}

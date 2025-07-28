@@ -4,10 +4,13 @@
  * Methods:
  * - saveUser(userId, data): Creates or updates a user document.
  * - getUser(userId): Retrieves a user document.
+ * - deleteUser(userId): Deletes a user document.
  * - saveTransactions(userId, transactions): Stores an array of transactions for a user.
  * - getTransactions(userId): Retrieves all transactions for a user.
  * - saveChallengeData(userId, challengeId, challengeData): Stores challenge data for a user and challenge.
  * - getChallengeData(userId, challengeId): Retrieves challenge data for a user and challenge.
+ * - getChallengeTemplate(challengeId): Retrieves a challenge template from challenges collection.
+ * - getAllChallenges(): Retrieves all available challenge templates.
  * - savePlaidItemMapping(itemId, userId, accessToken): Stores Plaid item_id mapping.
  * - getPlaidItemMapping(itemId): Retrieves Plaid item_id mapping.
  * - getPlaidAccessTokenByUserId(userId): Finds Plaid access token by userId.
@@ -161,5 +164,57 @@ module.exports = {
     
     const mapping = snapshot.docs[0].data();
     return mapping.accessToken;
+  },
+
+  /**
+   * Retrieves a challenge template by challengeId from the challenges collection.
+   * @param {string} challengeId - Challenge's unique ID
+   * @returns {Promise<object|null>} Challenge template or null if not found
+   */
+  async getChallengeTemplate(challengeId) {
+    const ref = db.collection('challenges').doc(challengeId);
+    const doc = await ref.get();
+    return doc.exists ? doc.data() : null;
+  },
+
+  /**
+   * Retrieves all available challenge templates from the challenges collection.
+   * @returns {Promise<Array>} Array of challenge templates with their IDs
+   */
+  async getAllChallenges() {
+    const snapshot = await db.collection('challenges').get();
+    const challenges = [];
+    snapshot.forEach(doc => {
+      challenges.push({
+        id: doc.id,
+        ...doc.data()
+      });
+    });
+    return challenges;
+  },
+
+  /**
+   * Retrieves all challenges that a user has joined from their 'challenges' subcollection.
+   * @param {string} userId - User's unique ID
+   * @returns {Promise<Array>} Array of user's joined challenges with challenge details
+   */
+  async getUserChallenges(userId) {
+    // Read from users/{userId}/challenges
+    const userRef = db.collection('users').doc(userId);
+    const snapshot = await userRef.collection('challenges').get();
+    const userChallenges = [];
+    for (const doc of snapshot.docs) {
+      const userChallengeData = doc.data();
+      // Get the challenge template details
+      const challengeTemplate = await this.getChallengeTemplate(userChallengeData.challengeId);
+      if (challengeTemplate) {
+        userChallenges.push({
+          userChallengeId: doc.id,
+          ...userChallengeData,
+          challengeTemplate
+        });
+      }
+    }
+    return userChallenges;
   },
 };
