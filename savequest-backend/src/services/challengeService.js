@@ -47,21 +47,14 @@ module.exports = {
   },
 
   /**
-   * Handles a daily check-in for a user on a challenge. Updates streak and check-ins.
-   * Compares today's date with last check-in and verifies challenge is still within duration.
+   * Simplified check-in for POC: Only requires userId and challengeId.
+   * Evaluates entire challenge period from joinedAt to joinedAt + duration.
    * @param {string} userId - User's unique ID
    * @param {string} challengeId - Challenge's unique ID
-   * @param {string} date - ISO date string for the check-in (YYYY-MM-DD)
-   * @returns {Promise<object>} Updated streak/status or error
+   * @returns {Promise<object>} Challenge status and streak or error
    */
-  async checkIn(userId, challengeId, date) {
+  async checkIn(userId, challengeId) {
     try {
-      // Settlement lag protection - only evaluate transactions that are at least N days old
-      const SETTLEMENT_LAG_DAYS = 1;
-      const lagCutoff = new Date();
-      lagCutoff.setDate(lagCutoff.getDate() - SETTLEMENT_LAG_DAYS);
-      const latestConfirmable = toIsoDate(lagCutoff);
-
       const data = await firestoreService.getChallengeData(userId, challengeId);
       if (!data) {
         return { success: false, message: 'User is not enrolled in this challenge.' };
@@ -76,132 +69,92 @@ module.exports = {
         };
       }
 
-      // normalize check-in date
-      const isoDate = toIsoDate(date);
-
-      // Prevent check-in for dates that are too recent (transactions may still be pending)
-      if (isoDate > latestConfirmable) {
-        return {
-          success: false,
-          message: `Too early to confirm ${isoDate}. Transactions may still be pending. Please check in after ${SETTLEMENT_LAG_DAYS} day(s) for transaction settlement.`
-        };
-      }
-
-      // Prevent duplicate check-in for the same day
-      const checkIns = data.checkIns || [];
-     if (checkIns.includes(isoDate)) {
-        return { success: false, message: 'Already checked in for this date.' };
-      }
-
-      // Get challenge template to check duration
+      // Get challenge template
       const challengeTemplate = await firestoreService.getChallengeTemplate(challengeId);
       if (!challengeTemplate) {
         return { success: false, message: 'Challenge template not found.' };
       }
 
-      // Check if today is within challenge duration from join date
-      // Simple date comparison: joinedAt date + duration days
+      // Calculate date ranges
       const joinDate = new Date(data.joinedAt);
-      const joinDateOnly = toIsoDate(joinDate); // Get YYYY-MM-DD format
-      const checkInDateOnly = isoDate;
+      const joinDateOnly = toIsoDate(joinDate);
+      const today = new Date();
+      const todayOnly = toIsoDate(today);
       
-      // Calculate which day of the challenge this is (1-based)
-      const joinDateObj = new Date(joinDateOnly);
-      const checkInDateObj = new Date(checkInDateOnly);
-      const daysDiff = Math.floor((checkInDateObj - joinDateObj) / (1000 * 60 * 60 * 24));
-      
-      if (daysDiff < 0) {
-        return { 
-          success: false, 
-          message: `Cannot check in before challenge start date (${joinDateOnly}).` 
-        };
-      }
-      
-      if (daysDiff >= challengeTemplate.duration) {
-        return { 
-          success: false, 
-          message: `Challenge has ended. Valid period was ${challengeTemplate.duration} days from ${joinDateOnly}.` 
-        };
-      }
+      // Calculate challenge end date
+      const challengeEndDate = new Date(joinDate);
+      challengeEndDate.setDate(challengeEndDate.getDate() + challengeTemplate.duration);
+      const challengeEndOnly = toIsoDate(challengeEndDate);
 
-      // Calculate days since join for loop logic
-      const daysSinceJoin = daysDiff;
+      // Calculate streak: min(days since join, duration)
+      const daysSinceJoin = Math.floor((today - joinDate) / (1000 * 60 * 60 * 24));
+      const streak = Math.min(daysSinceJoin, challengeTemplate.duration);
 
-     // Ensure no rule violations on missed days since last check-in or join date
-     const daysBetween = daysSinceJoin;
-     const lastCheck = data.lastCheckIn
-       ? Math.floor((new Date(data.lastCheckIn) - new Date(joinDateOnly)) / (1000 * 60 * 60 * 24))
-       : -1; // Start from day 0 if no previous check-in
-     for (let d = lastCheck + 1; d < daysBetween; d++) {
-       const gapDateObj = new Date(joinDateObj.getTime() + d * 24 * 60 * 60 * 1000);
-       const gapDateStr = toIsoDate(gapDateObj);
-       const res = await this.evaluateChallenge(userId, challengeId, gapDateStr);
-       if (!res.success || res.ruleBroken) {
-         // Mark challenge as failed - user must rejoin
-         await firestoreService.saveChallengeData(userId, challengeId, {
-           ...data,
-           status: 'failed',
-           failedAt: new Date().toISOString(),
-           failureReason: res.message || 'Rule violation detected on missed check-in dates.'
-         });
-         return {
-           success: false,
-           message: res.message || 'Rule violation detected on missed check-in dates. Challenge has been marked as failed. You must rejoin to start over.',
-           evaluation: res,
-           challengeFailed: true
-         };
-       }
-     }
-     // Evaluate today's rules before finalizing check-in
-     const todayEval = await this.evaluateChallenge(userId, challengeId, isoDate);
-     if (todayEval.ruleBroken) {
-       // Mark challenge as failed - user must rejoin
-       await firestoreService.saveChallengeData(userId, challengeId, {
-         ...data,
-         status: 'failed',
-         failedAt: new Date().toISOString(),
-         failureReason: todayEval.message || 'Rule violation detected for today\'s check-in.'
-       });
-       return {
-         success: false,
-         message: todayEval.message || 'Rule violation detected for today\'s check-in. Challenge has been marked as failed. You must rejoin to start over.',
-         evaluation: todayEval,
-         challengeFailed: true
-       };
-     }
-
-      // Calculate streak based on consecutive check-ins
-      const lastCheckIn = data.lastCheckIn ? new Date(data.lastCheckIn) : null;
-      const today = new Date(isoDate);
-      let streak = data.streak || 0;
-
-      // Calculate streak
-      if (lastCheckIn) {
-        const diff = Math.floor((today - lastCheckIn) / (1000 * 60 * 60 * 24));
-        if (diff === 1) {
-          streak += 1;
-        } else if (diff > 1) {
-          streak = 1; // Reset to 1 if there was a gap
+      // If challenge period hasn't ended yet, evaluate all transactions from join to today
+      if (todayOnly <= challengeEndOnly) {
+        // Evaluate all transactions in the challenge period
+        const evaluation = await this.evaluateChallenge(userId, challengeId);
+        
+        if (!evaluation.success) {
+          return evaluation; // Return error if evaluation failed
         }
-      } else {
-        streak = 1; // First check-in
+        
+        if (evaluation.ruleBroken) {
+          // Get detailed violation message with first violating transaction
+          let detailedMessage = evaluation.reason || 'Challenge rule violation detected';
+          
+          if (evaluation.violatedTransactions && evaluation.violatedTransactions.length > 0) {
+            const firstViolation = evaluation.violatedTransactions[0];
+            const violationDate = firstViolation.authorized_date || firstViolation.date;
+            const amount = Math.abs(firstViolation.amount || 0).toFixed(2);
+            const merchant = firstViolation.merchant_name || 'Unknown merchant';
+            
+            detailedMessage += `. First violation: $${amount} at ${merchant} on ${violationDate}`;
+          }
+          
+          // Mark challenge as failed
+          await firestoreService.saveChallengeData(userId, challengeId, {
+            ...data,
+            status: 'failed',
+            failedAt: new Date().toISOString(),
+            failureReason: detailedMessage,
+            streak: streak
+          });
+          
+          return {
+            success: false,
+            message: `Challenge failed: ${detailedMessage}. Please rejoin to start over.`,
+            challengeFailed: true,
+            streak: streak,
+            violationDetails: {
+              reason: evaluation.reason,
+              firstViolation: evaluation.violatedTransactions?.[0],
+              totalViolations: evaluation.violatedTransactions?.length || 0
+            }
+          };
+        }
       }
 
-      // Update check-in data
-     checkIns.push(isoDate);
+      // If we reach here, either challenge is completed successfully or still ongoing with no violations
+      const isCompleted = todayOnly > challengeEndOnly;
+      const status = isCompleted ? 'completed' : 'active';
+      
+      // Update challenge data
       await firestoreService.saveChallengeData(userId, challengeId, {
         ...data,
-        streak,
-       lastCheckIn: isoDate,
-        checkIns,
+        status: status,
+        streak: streak,
+        lastCheckIn: todayOnly,
+        ...(isCompleted && { completedAt: new Date().toISOString() })
       });
       
       return { 
         success: true, 
-        streak, 
-       lastCheckIn: isoDate, 
-        checkIns,
-        message: 'Check-in successful!'
+        status: status,
+        streak: streak,
+        isCompleted: isCompleted,
+        message: isCompleted ? 'Challenge completed successfully!' : 'Check-in successful!',
+        challengeEndDate: challengeEndOnly
       };
     } catch (error) {
       return { success: false, message: error.message };
@@ -250,7 +203,7 @@ module.exports = {
         };
       }
 
-      // Filter transactions based on evaluation date or challenge duration
+      // Filter transactions based on evaluation date or user's challenge join date
       let relevantTransactions;
       if (evaluationDate) {
         // For specific date evaluation, only look at transactions on that date
@@ -260,14 +213,22 @@ module.exports = {
           return txnDate && txnDate === evaluationDate;
         });
       } else {
-        // For general evaluation, use challenge duration window
-        const duration = challengeTemplate.duration || 7;
-        const cutoffDate = new Date();
-        cutoffDate.setDate(cutoffDate.getDate() - duration);
-        const cutoffIso = cutoffDate.toISOString().slice(0, 10);
+        // For general evaluation, get the user's join date and evaluate from join to now
+        const challengeData = await firestoreService.getChallengeData(userId, challengeId);
+        if (!challengeData) {
+          return { success: false, message: 'User challenge data not found.' };
+        }
+        
+        const joinDate = new Date(challengeData.joinedAt);
+        const joinDateOnly = toIsoDate(joinDate);
+        const today = new Date();
+        const challengeEndDate = new Date(joinDate);
+        challengeEndDate.setDate(challengeEndDate.getDate() + challengeTemplate.duration);
+        const evaluateUntil = today < challengeEndDate ? toIsoDate(today) : toIsoDate(challengeEndDate);
+        
         relevantTransactions = transactions.filter(txn => {
           const txnDate = txn.authorized_date || txn.date;
-          return txnDate && txnDate >= cutoffIso;
+          return txnDate && txnDate >= joinDateOnly && txnDate <= evaluateUntil;
         });
       }
 

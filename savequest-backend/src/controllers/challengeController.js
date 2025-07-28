@@ -31,17 +31,17 @@ module.exports = {
 
   /**
    * Handles a daily check-in for a user on a challenge.
-   * @param {Request} req - Express request (expects userId, challengeId, date in body)
+   * @param {Request} req - Express request (expects userId, challengeId in body)
    * @param {Response} res - Express response
    * @returns {object} Updated streak/status or error
    */
   async checkIn(req, res) {
     try {
-      const { userId, challengeId, date } = req.body;
-      if (!userId || !challengeId || !date) {
-        return res.status(400).json({ success: false, message: 'userId, challengeId, and date are required.' });
+      const { userId, challengeId } = req.body;
+      if (!userId || !challengeId) {
+        return res.status(400).json({ success: false, message: 'userId and challengeId are required.' });
       }
-      const result = await challengeService.checkIn(userId, challengeId, date);
+      const result = await challengeService.checkIn(userId, challengeId);
       if (result.success) {
         return res.status(200).json(result);
       } else {
@@ -173,6 +173,35 @@ module.exports = {
       }
       const userChallenges = await firestoreService.getUserChallenges(userId);
       return res.status(200).json({ success: true, challenges: userChallenges });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  /**
+   * Gets user transactions for recent activity display.
+   * @param {Request} req - Express request (expects userId in params)
+   * @param {Response} res - Express response
+   * @returns {object} List of user's transactions or error
+   */
+  async getUserTransactions(req, res) {
+    try {
+      const { userId } = req.params;
+      if (!userId) {
+        return res.status(400).json({ success: false, message: 'userId is required.' });
+      }
+      const transactions = await firestoreService.getTransactions(userId);
+      
+      // Sort by date (newest first) and limit to recent transactions
+      const sortedTransactions = (transactions || [])
+        .sort((a, b) => {
+          const dateA = a.authorized_date || a.date;
+          const dateB = b.authorized_date || b.date;
+          return new Date(dateB).getTime() - new Date(dateA).getTime();
+        })
+        .slice(0, 10); // Limit to 10 most recent transactions
+      
+      return res.status(200).json({ success: true, transactions: sortedTransactions });
     } catch (error) {
       return res.status(500).json({ success: false, message: error.message });
     }

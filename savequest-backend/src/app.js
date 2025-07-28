@@ -43,4 +43,7 @@ app.get('/user-challenges/:userId/:challengeId/streak', challengeController.getS
 app.get('/user-challenges/:userId/:challengeId/evaluate', challengeController.evaluateChallenge);
 app.post('/user-challenges/sync-transactions', challengeController.syncTransactions);
 
+// Transaction endpoints
+app.get('/transactions/:userId', challengeController.getUserTransactions);
+
 module.exports = app;

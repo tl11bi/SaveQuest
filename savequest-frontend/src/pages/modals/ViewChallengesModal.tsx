@@ -80,17 +80,10 @@ const ViewChallengesModal: React.FC<{ closeModal: () => void }> = ({ closeModal 
     setCheckingIn(true);
     setError(null);
     setSuccess(null);
-    
-    // Use settlement lag - check in for yesterday to ensure transactions are settled
-    const SETTLEMENT_LAG_DAYS = 1;
-    const lagCutoff = new Date();
-    lagCutoff.setDate(lagCutoff.getDate() - SETTLEMENT_LAG_DAYS);
-    const checkInDate = lagCutoff.toISOString().split('T')[0];
-    
     try {
-      const response = await checkInChallenge(userId, challengeId, checkInDate);
+      const response = await checkInChallenge(userId, challengeId);
       if (response.status === 200) {
-        setSuccess(`Check-in successful for "${challengeTitle}" (${checkInDate})!`);
+        setSuccess(`Check-in successful for "${challengeTitle}"!`);
         const refreshResponse = await getUserChallenges(userId);
         if (refreshResponse.data.success) {
           setUserChallenges(refreshResponse.data.challenges || []);

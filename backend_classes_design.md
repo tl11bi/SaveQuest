@@ -74,3 +74,8 @@ Here’s a modular breakdown for your backend, mapping architecture to code. Use
 **ErrorHandler / Middleware**
   - Centralizes error handling for Express, catches controller/service errors.
 
+## Backend Checkin logic
+
+The backend checkin logic should have 3 major functions. 
+
+1. everyday check-in validation

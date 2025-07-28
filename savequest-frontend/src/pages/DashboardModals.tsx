@@ -3,7 +3,7 @@ import axios from 'axios';
 import { getAvailableChallenges, joinChallenge, getUserChallenges, checkInChallenge } from '../api/axios';
 import { JoinChallengeModal } from './modals/JoinChallengeModal';
 import { ViewChallengesModal } from './modals/ViewChallengesModal';
-import { SyncTransactionsModal } from './modals/SyncTransactionsModal';
+import SyncTransactionsModal from './SyncTransactionsModal';
 
 // Challenge interface based on the API spec
 

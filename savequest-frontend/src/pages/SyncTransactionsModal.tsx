@@ -17,7 +17,8 @@ const SyncTransactionsModal: React.FC<{ closeModal: () => void }> = ({ closeModa
     setError(null);
     setResult(null);
     try {
-      const res = await syncTransactions(userId);
+      // Sync 90 days instead of 30
+      const res = await syncTransactions(userId, 90);
       if (res.data.success) {
         setResult(res.data.message || 'Transactions synced successfully!');
       } else {

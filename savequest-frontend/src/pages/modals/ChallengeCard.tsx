@@ -72,7 +72,7 @@ const ChallengeCard: React.FC<ChallengeCardProps> = ({ userChallenge, checkingIn
     </div>
     {isActive && (
       <button onClick={() => onCheckIn(userChallenge.challengeId, userChallenge.challengeTemplate.title)} disabled={checkingIn} style={{ background: '#4caf50', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', fontWeight: 600, fontSize: 14, cursor: checkingIn ? 'not-allowed' : 'pointer', opacity: checkingIn ? 0.6 : 1, width: '100%' }}>
-        {checkingIn ? 'Checking in...' : 'Check In (Yesterday)'}
+        {checkingIn ? 'Checking in...' : 'Check In'}
       </button>
     )}
     {isFailed && onRejoin && (
