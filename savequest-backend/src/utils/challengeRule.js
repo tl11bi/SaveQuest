@@ -64,40 +64,26 @@ function missesReplacement(txns, template) {
 }
 
 function breaksStreakGoal(txns, template) {
-  // Build a Set of ISO dates that *do* have a qualifying transaction
-  const okDays = new Set();
+  // For streak goals, check if we have qualifying transactions for today
+  // If we have qualifying transactions, the streak continues (rule NOT broken)
+  // If we have no qualifying transactions, the streak is broken
+  
+  let hasQualifyingTransactions = false;
   
   txns.forEach(txn => {
-    // Use authorized_date when present, with fallback to date
-    const txnDateStr = txn.authorized_date || txn.date;
-    if (!txnDateStr) return;
-    
-    const date = new Date(txnDateStr);
-    const isoDate = date.toISOString().slice(0, 10);
-    
     // Check if transaction matches target category
     const matchesTarget = template.target?.pfc_primary && 
       (txn.personal_finance_category?.primary?.includes(template.target.pfc_primary) ||
        txn.personal_finance_category?.detailed?.includes(template.target.pfc_primary));
     
     if (matchesTarget) {
-      okDays.add(isoDate);
+      hasQualifyingTransactions = true;
     }
   });
   
-  // For each day in the last `duration` days, check presence
-  const duration = template.duration || 7;
-  for (let i = 0; i < duration; i++) {
-    const day = new Date();
-    day.setDate(day.getDate() - i);
-    const isoDate = day.toISOString().slice(0, 10);
-    
-    if (!okDays.has(isoDate)) {
-      return true; // Broken if any day missing
-    }
-  }
-  
-  return false;
+  // Return true if rule is broken (no qualifying transactions found)
+  // Return false if rule is NOT broken (qualifying transactions found)
+  return !hasQualifyingTransactions;
 }
 
 module.exports = {

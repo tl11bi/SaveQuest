@@ -86,75 +86,92 @@ module.exports = {
       challengeEndDate.setDate(challengeEndDate.getDate() + challengeTemplate.duration);
       const challengeEndOnly = toIsoDate(challengeEndDate);
 
-      // Calculate streak: min(days since join, duration)
-      const daysSinceJoin = Math.floor((today - joinDate) / (1000 * 60 * 60 * 24));
-      const streak = Math.min(daysSinceJoin, challengeTemplate.duration);
-
-      // If challenge period hasn't ended yet, evaluate all transactions from join to today
-      if (todayOnly <= challengeEndOnly) {
-        // Evaluate all transactions in the challenge period
-        const evaluation = await this.evaluateChallenge(userId, challengeId);
-        
-        if (!evaluation.success) {
-          return evaluation; // Return error if evaluation failed
-        }
-        
-        if (evaluation.ruleBroken) {
-          // Get detailed violation message with first violating transaction
-          let detailedMessage = evaluation.reason || 'Challenge rule violation detected';
-          
-          if (evaluation.violatedTransactions && evaluation.violatedTransactions.length > 0) {
-            const firstViolation = evaluation.violatedTransactions[0];
-            const violationDate = firstViolation.authorized_date || firstViolation.date;
-            const amount = Math.abs(firstViolation.amount || 0).toFixed(2);
-            const merchant = firstViolation.merchant_name || 'Unknown merchant';
-            
-            detailedMessage += `. First violation: $${amount} at ${merchant} on ${violationDate}`;
-          }
-          
-          // Mark challenge as failed
-          await firestoreService.saveChallengeData(userId, challengeId, {
-            ...data,
-            status: 'failed',
-            failedAt: new Date().toISOString(),
-            failureReason: detailedMessage,
-            streak: streak
-          });
-          
-          return {
-            success: false,
-            message: `Challenge failed: ${detailedMessage}. Please rejoin to start over.`,
-            challengeFailed: true,
-            streak: streak,
-            violationDetails: {
-              reason: evaluation.reason,
-              firstViolation: evaluation.violatedTransactions?.[0],
-              totalViolations: evaluation.violatedTransactions?.length || 0
-            }
-          };
-        }
+      // Check if challenge period has ended - but still evaluate the challenge
+      const challengePeriodEnded = todayOnly > challengeEndOnly;
+      
+      console.log('=== CHECK-IN DEBUG START ===');
+      console.log('Challenge ID:', challengeId);
+      console.log('User ID:', userId);
+      console.log('Join date:', joinDateOnly);
+      console.log('Today:', todayOnly);
+      console.log('Challenge end date:', challengeEndOnly);
+      console.log('Challenge period ended:', challengePeriodEnded);
+      console.log('Challenge template:', {
+        title: challengeTemplate.title,
+        ruleType: challengeTemplate.ruleType,
+        duration: challengeTemplate.duration,
+        target: challengeTemplate.target,
+        capAmount: challengeTemplate.capAmount,
+        replacement: challengeTemplate.replacement
+      });
+      console.log('=== CHECK-IN DEBUG END ===');
+      
+      // Always evaluate the challenge for the actual challenge period
+      const evaluation = await this.evaluateChallenge(userId, challengeId);
+      
+      if (!evaluation.success) {
+        return evaluation; // Return error if evaluation failed
+      }
+      
+      const ruleBroken = evaluation.ruleBroken;
+      
+      // Calculate streak: days completed successfully
+      let currentStreak = 0;
+      if (!ruleBroken) {
+        const daysCompleted = Math.floor((today - joinDate) / (1000 * 60 * 60 * 24)) + 1;
+        currentStreak = Math.min(daysCompleted, challengeTemplate.duration);
       }
 
-      // If we reach here, either challenge is completed successfully or still ongoing with no violations
-      const isCompleted = todayOnly > challengeEndOnly;
-      const status = isCompleted ? 'completed' : 'active';
+      // If rule is broken, mark challenge as failed
+      if (ruleBroken) {
+        await firestoreService.saveChallengeData(userId, challengeId, {
+          ...data,
+          status: 'failed',
+          streak: currentStreak,
+          failedAt: new Date().toISOString()
+        });
+        
+        return { 
+          success: true, 
+          status: 'failed',
+          streak: currentStreak,
+          ruleBroken: true,
+          message: `Challenge failed! Rule violation detected.`,
+          evaluation: evaluation,
+          challengePeriodEnded: challengePeriodEnded
+        };
+      }
+
+      // Challenge passed - determine final status based on whether period ended
+      const isComplete = challengePeriodEnded || currentStreak >= challengeTemplate.duration;
+      const newStatus = isComplete ? 'completed' : 'active';
       
-      // Update challenge data
       await firestoreService.saveChallengeData(userId, challengeId, {
         ...data,
-        status: status,
-        streak: streak,
-        lastCheckIn: todayOnly,
-        ...(isCompleted && { completedAt: new Date().toISOString() })
+        status: newStatus,
+        streak: currentStreak,
+        lastCheckedAt: new Date().toISOString(),
+        ...(isComplete && { completedAt: new Date().toISOString() })
       });
+      
+      let message;
+      if (challengePeriodEnded) {
+        message = 'Challenge period has ended. Challenge completed successfully!';
+      } else if (isComplete) {
+        message = `Congratulations! Challenge completed with ${currentStreak} day streak!`;
+      } else {
+        message = `Check-in successful! Current streak: ${currentStreak} days`;
+      }
       
       return { 
         success: true, 
-        status: status,
-        streak: streak,
-        isCompleted: isCompleted,
-        message: isCompleted ? 'Challenge completed successfully!' : 'Check-in successful!',
-        challengeEndDate: challengeEndOnly
+        status: newStatus,
+        streak: currentStreak,
+        ruleBroken: false,
+        isCompleted: isComplete,
+        message: message,
+        evaluation: evaluation,
+        challengePeriodEnded: challengePeriodEnded
       };
     } catch (error) {
       return { success: false, message: error.message };
@@ -183,10 +200,9 @@ module.exports = {
    * Evaluates challenge rules against user transactions.
    * @param {string} userId - User's unique ID
    * @param {string} challengeId - Challenge's unique ID
-   * @param {string} evaluationDate - Optional ISO date string (YYYY-MM-DD) for specific date evaluation
    * @returns {Promise<object>} Evaluation result with rule status
    */
-  async evaluateChallenge(userId, challengeId, evaluationDate = null) {
+  async evaluateChallenge(userId, challengeId) {
     try {
       // Get challenge template from challenges collection
       const challengeTemplate = await firestoreService.getChallengeTemplate(challengeId);
@@ -203,41 +219,57 @@ module.exports = {
         };
       }
 
-      // Filter transactions based on evaluation date or user's challenge join date
-      let relevantTransactions;
-      if (evaluationDate) {
-        // For specific date evaluation, only look at transactions on that date
-        // Use authorized_date when present, with fallback to date
-        relevantTransactions = transactions.filter(txn => {
-          const txnDate = txn.authorized_date || txn.date;
-          return txnDate && txnDate === evaluationDate;
-        });
-      } else {
-        // For general evaluation, get the user's join date and evaluate from join to now
-        const challengeData = await firestoreService.getChallengeData(userId, challengeId);
-        if (!challengeData) {
-          return { success: false, message: 'User challenge data not found.' };
-        }
-        
-        const joinDate = new Date(challengeData.joinedAt);
-        const joinDateOnly = toIsoDate(joinDate);
-        const today = new Date();
-        const challengeEndDate = new Date(joinDate);
-        challengeEndDate.setDate(challengeEndDate.getDate() + challengeTemplate.duration);
-        const evaluateUntil = today < challengeEndDate ? toIsoDate(today) : toIsoDate(challengeEndDate);
-        
-        relevantTransactions = transactions.filter(txn => {
-          const txnDate = txn.authorized_date || txn.date;
-          return txnDate && txnDate >= joinDateOnly && txnDate <= evaluateUntil;
-        });
+      // Filter transactions based on user's challenge join date
+      // Always evaluate the complete challenge period (join date to challenge end date)
+      const challengeData = await firestoreService.getChallengeData(userId, challengeId);
+      if (!challengeData) {
+        return { success: false, message: 'User challenge data not found.' };
       }
+      
+      const joinDate = new Date(challengeData.joinedAt);
+      const joinDateOnly = toIsoDate(joinDate);
+      const challengeEndDate = new Date(joinDate);
+      challengeEndDate.setDate(challengeEndDate.getDate() + challengeTemplate.duration);
+      const challengeEndOnly = toIsoDate(challengeEndDate);
+      
+      const relevantTransactions = transactions.filter(txn => {
+        const txnDate = txn.authorized_date || txn.date;
+        return txnDate && txnDate >= joinDateOnly && txnDate <= challengeEndOnly;
+      });
 
-      // Evaluate the rule
+      console.log('=== TRANSACTIONS IN EVALUATION PERIOD ===');
+      console.log('Total transactions found:', transactions.length);
+      console.log('Relevant transactions in period:', relevantTransactions.length);
+      relevantTransactions.forEach((txn, index) => {
+        const txnDate = txn.authorized_date || txn.date;
+        console.log(`Transaction ${index + 1}:`);
+        console.log(`  - ID: ${txn.transaction_id}`);
+        console.log(`  - Merchant: ${txn.merchant_name}`);
+        console.log(`  - Amount: $${Math.abs(txn.amount)}`);
+        console.log(`  - Date: ${txnDate}`);
+        console.log(`  - Category Primary: ${txn.personal_finance_category?.primary}`);
+        console.log(`  - Category Detailed: ${txn.personal_finance_category?.detailed}`);
+        console.log(`  - Account ID: ${txn.account_id}`);
+        console.log('---');
+      });
+      console.log('=== END TRANSACTIONS IN PERIOD ===');
+
+      console.log('=== EVALUATION DEBUG ===');
+      console.log('Challenge ID:', challengeId);
+      console.log('Join date:', joinDateOnly);
+      console.log('Challenge end date:', challengeEndOnly);
+      console.log('Evaluation period:', `${joinDateOnly} to ${challengeEndOnly}`);
+      console.log('Total transactions:', transactions.length);
+      console.log('Relevant transactions:', relevantTransactions.length);
+      console.log('Challenge template target:', challengeTemplate.target);
+      console.log('Challenge rule type:', challengeTemplate.ruleType);      // Evaluate the rule
       const ruleBroken = evaluateRule(
         challengeTemplate.ruleType, 
         relevantTransactions, 
         challengeTemplate
       );
+
+      console.log('Rule evaluation result:', ruleBroken);
 
       // Get specific violated transactions based on rule type
       let violatedTransactions = [];
@@ -249,6 +281,11 @@ module.exports = {
                 txn.personal_finance_category?.detailed?.includes(challengeTemplate.target.pfc_detailed);
               const matchesMerchant = challengeTemplate.target?.merchants && 
                 challengeTemplate.target.merchants.includes(txn.merchant_name);
+              console.log(`Checking transaction ${txn.merchant_name}:`);
+              console.log(`  - Category match (${challengeTemplate.target?.pfc_detailed}): ${matchesCategory}`);
+              console.log(`  - Merchant match (${challengeTemplate.target?.merchants}): ${matchesMerchant}`);
+              console.log(`  - Transaction category detailed: ${txn.personal_finance_category?.detailed}`);
+              console.log(`  - Transaction category primary: ${txn.personal_finance_category?.primary}`);
               return matchesCategory || matchesMerchant;
             });
             break;
@@ -265,8 +302,23 @@ module.exports = {
             });
             break;
           case 'streak_goal':
-            // For streak goal, return all transactions since the violation is about missing days
-            violatedTransactions = relevantTransactions;
+            // For streak goal, the violation is the absence of qualifying transactions
+            const qualifyingTransactions = relevantTransactions.filter(txn => {
+              const matchesTarget = challengeTemplate.target?.pfc_primary && 
+                (txn.personal_finance_category?.primary?.includes(challengeTemplate.target.pfc_primary) ||
+                 txn.personal_finance_category?.detailed?.includes(challengeTemplate.target.pfc_primary));
+              console.log(`Checking streak goal transaction ${txn.merchant_name}:`);
+              console.log(`  - Target category: ${challengeTemplate.target?.pfc_primary}`);
+              console.log(`  - Transaction category primary: ${txn.personal_finance_category?.primary}`);
+              console.log(`  - Transaction category detailed: ${txn.personal_finance_category?.detailed}`);
+              console.log(`  - Matches target: ${matchesTarget}`);
+              return matchesTarget;
+            });
+            console.log(`Found ${qualifyingTransactions.length} qualifying transactions for streak goal`);
+            // For streak goals, we don't return violated transactions in the traditional sense
+            // Instead, we indicate success/failure based on having qualifying transactions
+            violatedTransactions = [];
+            break;
             break;
           default:
             violatedTransactions = relevantTransactions;
@@ -292,6 +344,23 @@ module.exports = {
             reason = 'Challenge rule was broken';
         }
       }
+
+      if (ruleBroken) {
+        console.log('RULE BROKEN - Violated transactions:', violatedTransactions.length);
+        violatedTransactions.forEach(txn => {
+          const txnDate = txn.authorized_date || txn.date;
+          console.log(`Violation: ${txn.merchant_name} - $${Math.abs(txn.amount)} on ${txnDate}`);
+        });
+      } else {
+        console.log('NO RULE VIOLATIONS FOUND - Challenge is passing');
+      }
+      
+      console.log('=== FINAL EVALUATION RESULT ===');
+      console.log('Rule broken:', ruleBroken);
+      console.log('Reason:', reason || 'No violations');
+      console.log('Evaluated transactions:', relevantTransactions.length);
+      console.log('Violated transactions:', violatedTransactions.length);
+      console.log('=== END DEBUG ===');
 
       return { 
         success: true, 
