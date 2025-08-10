@@ -4,6 +4,53 @@
 
 ---
 
+## Demo Screen Shorts
+## Sign in page
+![alt text](image-2.png)
+**Demo: Sign in flow and onboarding**  
+[![Watch the demo](https://img.youtube.com/vi/5rEMXYsry88/0.jpg)](https://www.youtube.com/watch?v=5rEMXYsry88)
+
+### Dashboard
+![alt text](image.png)
+
+
+### Dashboard - Join a challenge
+![alt text](image-1.png)
+**Demo: How to join a savings challenge**  
+[![Watch the demo](https://img.youtube.com/vi/krRlft0J9kw/0.jpg)](https://www.youtube.com/watch?v=krRlft0J9kw)
+
+
+### Dashboard - Connect To Bank
+![alt text](image-3.png)
+**Demo: Connecting your bank account with Plaid**  
+[![Watch the demo](https://img.youtube.com/vi/1K0OC13wAYs/0.jpg)](https://www.youtube.com/watch?v=1K0OC13wAYs)
+
+
+### Dashboard - Sync Transactions and View Transaction History
+![alt text](image-4.png)
+**Demo: Syncing transactions and viewing your history**  
+[![Watch the demo](https://img.youtube.com/vi/wHFxBnb3TMc/0.jpg)](https://www.youtube.com/watch?v=wHFxBnb3TMc)
+
+
+### Dashboard - Join Challenges
+![alt text](image-5.png)
+**Demo: Joining multiple challenges**  
+[![Watch the demo](https://img.youtube.com/vi/zWXF6tLMlqw/0.jpg)](https://www.youtube.com/watch?v=zWXF6tLMlqw)
+
+### Dashboard - View Challenges and check-in
+![alt text](image-7.png)
+**Demo: Viewing challenges and daily check-in**  
+[![Watch the demo](https://img.youtube.com/vi/lAmVcFTXeo0/0.jpg)](https://www.youtube.com/watch?v=lAmVcFTXeo0)
+### Challenges View
+
+![alt text](image-6.png)
+**Demo: Viewing all available challenges**  
+[![Watch the demo](https://img.youtube.com/vi/hlEwe3imidM/0.jpg)](https://www.youtube.com/watch?v=hlEwe3imidM)
+
+
+
+
+
 ## 🛠️ Technical Overview
 
 - **Frontend:** React (Vite or Next.js), Tailwind CSS, Framer Motion, Plaid Link JS, hosted on Vercel
