@@ -4,6 +4,15 @@
 
 ---
 
+
+## Demo Screenshots & Videos
+
+👉 See all demo screenshots and video walkthroughs in the [DEMO.md](./DEMO.md) page.
+
+
+
+
+
 ## 🛠️ Technical Overview
 
 - **Frontend:** React (Vite or Next.js), Tailwind CSS, Framer Motion, Plaid Link JS, hosted on Vercel
